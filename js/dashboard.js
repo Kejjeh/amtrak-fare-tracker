@@ -70,7 +70,10 @@ function render(){
   const legs=[['Fri','NHV-BOS',COL.friday],['Sat','NHV-BOS',COL.saturday],['Sun','BOS-NHV',COL.sunday]];
   const ds=[{label:'Weekday (seed)',data:pts(SEED.weekday),borderColor:COL.weekday,backgroundColor:COL.weekday,borderWidth:2,borderDash:[5,4],tension:.3,pointRadius:2}];
   legs.forEach(([dow,dir,col])=>{const b=bandFor(legRows(rows,dow,dir),fareOf);if(!b.length)return;const rgba=hexA(col,0.13);ds.push({label:dow+' max',data:b.map(p=>({x:p.x,y:p.max})),borderColor:'transparent',backgroundColor:rgba,pointRadius:0,fill:'+1',tension:.3});ds.push({label:dow+' min',data:b.map(p=>({x:p.x,y:p.min})),borderColor:'transparent',backgroundColor:rgba,pointRadius:0,fill:false,tension:.3});ds.push({label:dow+' median',data:b.map(p=>({x:p.x,y:p.med})),borderColor:col,backgroundColor:col,borderWidth:2,tension:.3,pointRadius:4});});
-  const ymax=Math.max(90,...rows.map(fareOf).filter(Number.isFinite))+8;
+  // Acela Business reference line (median by lead-time bucket, both directions)
+  const ab=bandFor(rows.filter(r=>r.acela!=null),(r)=>r.acela);const orange=cssVar('--orange')||'#eb6834';
+  if(ab.length)ds.push({label:'Acela Business (median)',data:ab.map(p=>({x:p.x,y:p.med})),borderColor:orange,backgroundColor:orange,borderWidth:2,borderDash:[6,4],tension:.3,pointRadius:3,pointStyle:'rectRounded'});
+  const ymax=Math.max(90,...rows.map(fareOf).filter(Number.isFinite),...ab.map(p=>p.med))+10;
   c1.destroy();c1=new Chart(document.getElementById('c1'),{type:'line',plugins:[bandPlugin],data:{datasets:ds},options:baseOpts(95,ymax,'Days booked before departure','Cheapest coach ('+(MODE==='sensible'?'sensible hours':'any train')+')')});
   rebuildRT(rows,latest);
   forecast(rows);
@@ -156,6 +159,10 @@ function buildKPIs(rows,latest){
   // KPI 4: booking-early savings % (current mode)
   const b=bandFor(rows,fareOf);let pct=null;if(b.length>=2){const near=b[0].med,far=b[b.length-1].med;if(near>0)pct=Math.round((near-far)/near*100);}
   set('kpiEarly',pct!=null&&pct>0?'~'+pct+'%':'—');set('kpiEarlyFoot',pct!=null?'book ~'+b[b.length-1].x+'d vs ~'+b[0].x+'d out':'need more lead-times');
+  // KPI 5: Acela Business premium vs the coach fare you'd otherwise book
+  const aps=lr.filter(r=>r.acela!=null).map(r=>r.acela-(r.sens!=null?r.sens:r.low)).filter(v=>v>0);
+  if(aps.length){const avg=Math.round(aps.reduce((a,b)=>a+b,0)/aps.length);set('kpiAcela','+$'+avg);setH('kpiAcelaFoot','avg Business over coach ('+aps.length+' legs)');}
+  else{set('kpiAcela','—');set('kpiAcelaFoot','no Acela data logged');}
   // recommendation card
   const head=document.getElementById('recHead'),body=document.getElementById('recBody');
   if(MODE==='sensible'&&bestS){head.textContent='Best bookable round trip: '+bestS.day+' out '+(bestS.tr?'(#'+bestS.tr+' '+bestS.dep+') ':'')+'+ Sunday back, weekend of '+bestS.k+' — about $'+bestS.rt+'.';const floorTxt=(best&&best.rt<bestS.rt)?' The absolute floor is ~$'+best.rt+', but that rides a late-evening train.':'';const fl=bestS.rt<=70;body.innerHTML=(fl?'At/near the practical floor — <b>good to book</b>.':'Still above the practical floor; if your weekend is &gt;2 weeks out, watch a few more days.')+floorTxt+' “Sensible” = outbound 7am–5pm, return 8am–7:30pm.';}
