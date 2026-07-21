@@ -50,15 +50,21 @@ function shortDate(k){const d=new Date(k+'T00:00:00');return MON[d.getMonth()]+'
 function nthWeekday(y,m,wd,n){let d=new Date(y,m,1),c=0;while(c<6){if(d.getDay()===wd&&++c===n)return d;d.setDate(d.getDate()+1);}return d;}
 function holidayList(y){return [{name:'Labor Day',date:nthWeekday(y,8,1,1)},{name:'Columbus Day',date:nthWeekday(y,9,1,2)},{name:'Veterans Day',date:new Date(y,10,11)},{name:'Thanksgiving',date:nthWeekday(y,10,4,4)},{name:'Christmas',date:new Date(y,11,25)},{name:"New Year's",date:new Date(y,0,1)},{name:'MLK Day',date:nthWeekday(y,0,1,3)}];}
 function holidayName(satKey){const sat=new Date(satKey+'T00:00:00'),y=sat.getFullYear();const hs=[...holidayList(y-1),...holidayList(y),...holidayList(y+1)];for(const h of hs){if(Math.abs((h.date-sat)/86400000)<=3)return h.name;}return null;}
-// mode-aware per-weekend round-trip totals for the season view
-function seasonData(rows,latest){
-  const lr=rows.filter(r=>r.captured===latest),wk={};
-  lr.forEach(r=>{const k=weekendKey(r);if(!k)return;const o=wk[k]=wk[k]||{k,seats:[]};const f=fareOf(r);
-    if(o['f'+r.dow]==null||f<o['f'+r.dow]){o['f'+r.dow]=f;o['t'+r.dow]=trainOf(r);o['d'+r.dow]=depOf(r);}
-    if(r.seats!=null)o.seats.push(r.seats);});
-  return Object.values(wk).map(o=>{const outFare=Math.min(o.fFri??Infinity,o.fSat??Infinity);const rt=(o.fSun!=null&&outFare<Infinity)?outFare+o.fSun:null;const outDay=(o.fSat!=null&&o.fSat<=(o.fFri??Infinity))?'Sat':(o.fFri!=null?'Fri':null);
-    return {k:o.k,rt,outDay,outTrain:outDay==='Sat'?o.tSat:o.tFri,outDep:outDay==='Sat'?o.dSat:o.dFri,retTrain:o.tSun,retDep:o.dSun,minSeats:o.seats.length?Math.min(...o.seats):null,holiday:holidayName(o.k)};
-  }).filter(w=>w.rt!=null);
+// mode-aware per-weekend round-trip totals for the season view.
+// Each weekend+leg uses its MOST RECENT capture, so weekends captured on
+// different days (e.g. summer vs the long-range sweep) all appear.
+function seasonData(rows){
+  const wk={};
+  rows.forEach(r=>{const k=weekendKey(r);if(!k)return;const o=wk[k]=wk[k]||{k,leg:{}};const cur=o.leg[r.dow];const f=fareOf(r);
+    if(!cur||r.captured>cur.cap||(r.captured===cur.cap&&f<cur.f))o.leg[r.dow]={f,t:trainOf(r),d:depOf(r),cap:r.captured,seats:r.seats};});
+  const today=new Date();today.setHours(0,0,0,0);
+  return Object.values(wk).map(o=>{const L=o.leg,fFri=L.Fri&&L.Fri.f,fSat=L.Sat&&L.Sat.f,fSun=L.Sun&&L.Sun.f;
+    const outFare=Math.min(fFri??Infinity,fSat??Infinity);if(fSun==null||outFare===Infinity)return null;
+    const outDay=(fSat!=null&&fSat<=(fFri??Infinity))?'Sat':'Fri',OL=outDay==='Sat'?L.Sat:L.Fri;
+    const legs=[L.Fri,L.Sat,L.Sun].filter(Boolean),seats=legs.filter(x=>x.seats!=null).map(x=>x.seats);
+    const sunday=new Date(o.k+'T00:00:00');sunday.setDate(sunday.getDate()+1);if(sunday<today)return null;
+    return {k:o.k,rt:outFare+fSun,outDay,outTrain:OL.t,outDep:OL.d,retTrain:L.Sun.t,retDep:L.Sun.d,minSeats:seats.length?Math.min(...seats):null,holiday:holidayName(o.k),asOf:legs.map(x=>x.cap).sort()[0]};
+  }).filter(Boolean);
 }
 const seasonLabels={id:'seasonLabels',afterDatasetsDraw(chart){if(chart.canvas.id!=='c6')return;const {ctx,chartArea:a,scales:{y}}=chart;const meta=chart.getDatasetMeta(0),vals=chart.data.datasets[0].data;if(!vals.length)return;const minV=Math.min(...vals);ctx.save();ctx.font='600 10px sans-serif';ctx.textAlign='center';vals.forEach((v,i)=>{const bar=meta.data[i];if(!bar)return;if(v>y.max){ctx.fillStyle=cssVar('--red')||'#e24b4a';ctx.fillText('$'+v,bar.x,a.top+11);}else if(v===minV){ctx.fillStyle=cssVar('--green')||'#008300';ctx.fillText('$'+v,bar.x,bar.y-4);}});ctx.restore();}};
 
@@ -96,14 +102,14 @@ function render(){
   buildKPIs(rows,latest);
   buildTimeChart();
   buildAcela();
-  buildSeason(rows,latest);
+  buildSeason(rows);
 }
 
 // Season view: cheapest bookable round-trip per weekend across the horizon, + a ranking table
-function buildSeason(rows,latest){
-  const data=seasonData(rows,latest);
+function buildSeason(rows){
+  const data=seasonData(rows);
   const chartEl=document.getElementById('c6'),tableEl=document.getElementById('seasonTable');
-  if(!data.length){if(c6){c6.destroy();c6=null;}if(tableEl)tableEl.innerHTML='<div class="placeholder">Need at least one full weekend (outbound + Sunday return) in the latest capture.</div>';return;}
+  if(!data.length){if(c6){c6.destroy();c6=null;}if(tableEl)tableEl.innerHTML='<div class="placeholder">Need at least one upcoming weekend with an outbound + Sunday return.</div>';return;}
   const green=cssVar('--green')||'#008300',red=cssVar('--red')||'#e24b4a';
   const byDate=[...data].sort((a,b)=>a.k<b.k?-1:1);
   const labels=byDate.map(w=>shortDate(w.k)),vals=byDate.map(w=>w.rt),colors=byDate.map(w=>w.holiday?red:green);
@@ -112,9 +118,10 @@ function buildSeason(rows,latest){
   if(c6)c6.destroy();
   c6=new Chart(chartEl,{type:'bar',plugins:[seasonLabels],data:{labels,datasets:[{label:'Cheapest round trip',data:vals,backgroundColor:colors,borderRadius:4,maxBarThickness:38}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:(c)=>{const w=byDate[c.dataIndex];return '$'+w.rt+(w.holiday?' · '+w.holiday:'')+' · '+(w.outDay||'')+' out '+(w.outTrain?'#'+w.outTrain+' ':'')+(w.outDep||'');}}}},scales:{x:{ticks:{color:muted,maxRotation:60,minRotation:45},grid:{display:false}},y:{min:0,max:ymax,title:{display:true,text:'Bookable round trip ('+(MODE==='sensible'?'sensible':'any train')+')',color:muted},ticks:{color:muted,callback:money},grid:{color:grid}}}}});
   const rank=[...data].sort((a,b)=>a.rt-b.rt);
-  let h='<table><tr><th>#</th><th>Weekend</th><th>Bookable RT</th><th>Outbound</th><th>Return</th><th>Seats</th><th></th></tr>';
-  rank.forEach((w,i)=>{const scarce=w.minSeats!=null&&w.minSeats<=2;const outTxt=(w.outDay||'—')+(w.outTrain?' #'+w.outTrain:'')+(w.outDep?' '+w.outDep:'');const retTxt='Sun'+(w.retTrain?' #'+w.retTrain:'')+(w.retDep?' '+w.retDep:'');h+='<tr><td class="num">'+(i+1)+'</td><td>'+shortDate(w.k)+'</td><td class="num'+(i===0?' best':'')+'">$'+w.rt+'</td><td>'+outTxt+'</td><td>'+retTxt+'</td><td class="num '+(scarce?'scarce':'')+'">'+(w.minSeats!=null?w.minSeats+(scarce?' ⚠':''):'—')+'</td><td>'+(w.holiday?'<span class="pill">'+w.holiday+'</span>':'')+'</td></tr>';});
-  h+='</table><p class="note">Cheapest bookable round trip per weekend at the current fare basis. ⚠ = ≤2 seats left at the lowest price on some leg. Holiday weekends can be far pricier — see the badge.</p>';
+  const caps=[...new Set(data.map(w=>w.asOf))].sort();
+  let h='<div style="overflow-x:auto"><table><tr><th>#</th><th>Weekend</th><th>Bookable RT</th><th>Outbound</th><th>Return</th><th>Seats</th><th>As of</th><th></th></tr>';
+  rank.forEach((w,i)=>{const scarce=w.minSeats!=null&&w.minSeats<=2;const outTxt=(w.outDay||'—')+(w.outTrain?' #'+w.outTrain:'')+(w.outDep?' '+w.outDep:'');const retTxt='Sun'+(w.retTrain?' #'+w.retTrain:'')+(w.retDep?' '+w.retDep:'');h+='<tr><td class="num">'+(i+1)+'</td><td>'+shortDate(w.k)+'</td><td class="num'+(i===0?' best':'')+'">$'+w.rt+'</td><td>'+outTxt+'</td><td>'+retTxt+'</td><td class="num '+(scarce?'scarce':'')+'">'+(w.minSeats!=null?w.minSeats+(scarce?' ⚠':''):'—')+'</td><td style="color:var(--muted)">'+shortDate(w.asOf)+'</td><td>'+(w.holiday?'<span class="pill">'+w.holiday+'</span>':'')+'</td></tr>';});
+  h+='</table></div><p class="note">Cheapest bookable round trip per weekend, each using its most recent capture ('+(caps.length>1?caps.map(shortDate).join(' & '):shortDate(caps[0]))+'). ⚠ = ≤2 seats left at the lowest price on some leg. Holiday weekends can be far pricier — see the badge.</p>';
   if(tableEl)tableEl.innerHTML=h;
 }
 
