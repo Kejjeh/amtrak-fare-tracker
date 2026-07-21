@@ -6,24 +6,26 @@
 <title>Amtrak New Haven ⇄ Boston — Weekend Fare Tracker</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" integrity="sha384-dug+JxfBvklEQdJ4AYuBBAIScUz0bVN73xpy273gcAwHjb3qI0fXmuYNaNfdyYJG" crossorigin="anonymous" defer></script>
 <style>
-  :root{--bg:#f7f6f2;--card:#fff;--ink:#1a1a19;--muted:#6b6a64;--line:#e4e2da;--blue:#2a78d6;--green:#008300;--pink:#d55181;--gray:#898781;--orange:#eb6834;--violet:#534ab7;--red:#e24b4a}
+  :root{--bg:#f7f6f2;--card:#fff;--ink:#1a1a19;--muted:#6b6a64;--line:#e4e2da;--grid:#e1e0d9;--blue:#2a78d6;--green:#008300;--pink:#d55181;--gray:#898781;--orange:#eb6834;--violet:#534ab7;--red:#e24b4a;--btn-bg:#fff;--btn-hover:#f1efe8;--active-ink:#fff;--rec-bg:#eef6ee;--rec-border:#cfe6cf;--rec-tag:#2f7d32;--rec-ink:#243024;--ph-bg:#faf9f5;--stale-bg:#fdf3e7;--stale-border:#f0ddc0;--stale-ink:#8a5a1e;--pill-bg:#eef4ff;--pill-ink:#1a4e8f;color-scheme:light}
+  :root[data-theme="dark"]{--bg:#14161a;--card:#1c1f26;--ink:#e8e6e1;--muted:#9a988f;--line:#2c313b;--grid:#2a2f38;--blue:#5b9cf0;--green:#46b45f;--pink:#e07aa4;--gray:#9a988f;--orange:#f0895a;--violet:#8b83e6;--red:#ef6b6a;--btn-bg:#232733;--btn-hover:#2c313b;--active-ink:#0d1a10;--rec-bg:#17251b;--rec-border:#28492f;--rec-tag:#7fd292;--rec-ink:#cfe6d3;--ph-bg:#191c22;--stale-bg:#2a2115;--stale-border:#4a3a1e;--stale-ink:#e6bd7c;--pill-bg:#1c2c44;--pill-ink:#8bb9f0;color-scheme:dark}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6}
+  body,section,.kpi,.rec,.stale,.placeholder,.btn,.seg,.segbtn,select{transition:background-color .2s ease,border-color .2s ease,color .2s ease}
   .wrap{max-width:1040px;margin:0 auto;padding:32px 24px 64px}
   header h1{font-size:26px;font-weight:600;margin:0 0 4px}
   header p.sub{color:var(--muted);margin:0 0 4px;font-size:15px}
   header p.meta{color:var(--muted);margin:0;font-size:13px}
   .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:16px;font-size:13px}
-  .btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;font-size:13px;cursor:pointer;color:var(--ink)}
-  .btn:hover{background:#f1efe8}
+  .btn{border:1px solid var(--line);background:var(--btn-bg);border-radius:9px;padding:8px 14px;font-size:13px;cursor:pointer;color:var(--ink)}
+  .btn:hover{background:var(--btn-hover)}
   .status{color:var(--muted);font-size:12.5px}
   section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:22px}
   h2{font-size:19px;font-weight:600;margin:0 0 4px}
   h2 + p.lead{color:var(--muted);margin:0 0 18px;font-size:14px}
-  .rec{background:#eef6ee;border:1px solid #cfe6cf;border-radius:14px;padding:20px 24px;margin-top:22px}
-  .rec .tagline{font-size:12px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:#2f7d32}
+  .rec{background:var(--rec-bg);border:1px solid var(--rec-border);border-radius:14px;padding:20px 24px;margin-top:22px}
+  .rec .tagline{font-size:12px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--rec-tag)}
   .rec h2{font-size:21px;margin:4px 0 6px}
-  .rec p{margin:0;font-size:14.5px;color:#243024}
+  .rec p{margin:0;font-size:14.5px;color:var(--rec-ink)}
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:22px}
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
   .kpi .label{font-size:12.5px;color:var(--muted);margin-bottom:6px}
@@ -44,22 +46,26 @@
   ul.patterns{margin:6px 0 0;padding-left:0;list-style:none}
   ul.patterns li{padding:10px 0;border-bottom:1px solid var(--line);font-size:14.5px}
   ul.patterns li:last-child{border-bottom:none}
-  .pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:20px;background:#eef4ff;color:#1a4e8f;margin-left:6px}
+  .pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:20px;background:var(--pill-bg);color:var(--pill-ink);margin-left:6px}
   .note{font-size:12.5px;color:var(--muted);margin-top:14px;line-height:1.55}
   .foot-src{color:var(--muted);font-size:12px;margin-top:26px;text-align:center}
   .tag{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
-  select{border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px;background:#fff}
-  .placeholder{color:var(--muted);font-size:13.5px;background:#faf9f5;border:1px dashed var(--line);border-radius:10px;padding:16px 18px}
+  select{border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px;background:var(--btn-bg);color:var(--ink)}
+  .placeholder{color:var(--muted);font-size:13.5px;background:var(--ph-bg);border:1px dashed var(--line);border-radius:10px;padding:16px 18px}
   .best{color:var(--green);font-weight:600}.win{color:var(--red);font-weight:600}.scarce{color:var(--red)}
-  .stale{background:#fdf3e7;border:1px solid #f0ddc0;color:#8a5a1e;border-radius:12px;padding:12px 18px;margin-top:18px;font-size:13.5px}
-  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
-  .segbtn{border:0;background:#fff;color:var(--muted);font-size:13px;font-weight:600;padding:8px 14px;cursor:pointer}
+  .stale{background:var(--stale-bg);border:1px solid var(--stale-border);color:var(--stale-ink);border-radius:12px;padding:12px 18px;margin-top:18px;font-size:13.5px}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--btn-bg)}
+  .segbtn{border:0;background:var(--btn-bg);color:var(--muted);font-size:13px;font-weight:600;padding:8px 14px;cursor:pointer}
   .segbtn+.segbtn{border-left:1px solid var(--line)}
-  .segbtn.active{background:var(--green);color:#fff}
-  .segbtn:not(.active):hover{background:#f1efe8}
+  .segbtn.active{background:var(--green);color:var(--active-ink)}
+  .segbtn:not(.active):hover{background:var(--btn-hover)}
   .modebar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:16px}
   #modeHint{color:var(--muted);font-size:12.5px}
 </style>
+<script>
+// set theme before first paint to avoid a flash of the wrong mode
+(function(){try{var t=localStorage.getItem('amtrak-theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();
+</script>
 </head>
 <body>
 <div class="wrap">
@@ -72,6 +78,7 @@
       <button class="btn" id="loadBtn">⤢ Load fare log (CSV)</button>
       <input type="file" id="csvInput" accept=".csv" style="display:none">
       <span class="status" id="loadStatus">Trying to auto-load data/amtrak_fare_log.csv…</span>
+      <button class="btn" id="themeToggle" type="button" aria-label="Toggle dark mode" style="margin-left:auto">🌙 Dark</button>
     </div>
   </header>
 
