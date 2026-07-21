@@ -1,0 +1,14 @@
+#!/bin/sh
+# Auto-stamp the js/dashboard.js cache-buster into index.html whenever the JS
+# is part of a commit, then re-stage index.html so the two land together.
+# Safe by design: only acts when dashboard.js is staged, and never blocks a
+# commit (a missing Python interpreter or any stamp error is ignored).
+
+if git diff --cached --name-only | grep -q '^js/dashboard\.js$'; then
+  if command -v python >/dev/null 2>&1; then PY=python
+  elif command -v python3 >/dev/null 2>&1; then PY=python3
+  else exit 0
+  fi
+  "$PY" scripts/stamp_version.py >/dev/null 2>&1 && git add index.html 2>/dev/null
+fi
+exit 0

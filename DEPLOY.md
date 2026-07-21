@@ -26,7 +26,26 @@ to this repo (`git add data/amtrak_fare_log.csv && git commit -m "fares: <date>"
 Let the local tracker keep writing the CSV, then periodically copy it into the
 repo's `data/` folder and push. Simple, but not hands-off.
 
-## 4. (Optional) GitHub Action to timestamp deploys
+## 4. Cache-busting (so deploys show up instantly)
+GitHub Pages serves assets with `Cache-Control: max-age=600` and you can't
+change headers, so a returning visitor could otherwise load fresh `index.html`
+but keep an old cached `js/dashboard.js`. To avoid that, the script tag carries
+a content hash (`js/dashboard.js?v=<hash>`); when the JS changes, the URL
+changes and the browser refetches.
+
+`scripts/stamp_version.py` keeps that hash current. It runs automatically via a
+tracked pre-commit hook whenever `js/dashboard.js` is part of a commit — this
+machine already has it enabled. **On a fresh clone, enable it once:**
+
+```
+git config core.hooksPath .githooks
+```
+
+You can also run it by hand (`python scripts/stamp_version.py`) or verify in CI
+(`python scripts/stamp_version.py --check`). CSV-only commits (the daily
+tracker) don't touch the hash, so nothing extra happens there.
+
+## 5. (Optional) GitHub Action to timestamp deploys
 No build step is needed — Pages serves the static files directly. If you later
 add a build (e.g. bundling), add a `.github/workflows/pages.yml`. For now the
 plain branch deploy is enough.
