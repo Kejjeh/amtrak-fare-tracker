@@ -52,6 +52,13 @@
   .placeholder{color:var(--muted);font-size:13.5px;background:#faf9f5;border:1px dashed var(--line);border-radius:10px;padding:16px 18px}
   .best{color:var(--green);font-weight:600}.win{color:var(--red);font-weight:600}.scarce{color:var(--red)}
   .stale{background:#fdf3e7;border:1px solid #f0ddc0;color:#8a5a1e;border-radius:12px;padding:12px 18px;margin-top:18px;font-size:13.5px}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
+  .segbtn{border:0;background:#fff;color:var(--muted);font-size:13px;font-weight:600;padding:8px 14px;cursor:pointer}
+  .segbtn+.segbtn{border-left:1px solid var(--line)}
+  .segbtn.active{background:var(--green);color:#fff}
+  .segbtn:not(.active):hover{background:#f1efe8}
+  .modebar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:16px}
+  #modeHint{color:var(--muted);font-size:12.5px}
 </style>
 </head>
 <body>
@@ -70,6 +77,15 @@
 
   <div class="stale" id="staleBanner" style="display:none"></div>
 
+  <div class="modebar">
+    <span class="tag" style="margin:0">Fares shown for</span>
+    <div class="seg" id="modeToggle" role="group" aria-label="Fare basis: sensible departure times or any train">
+      <button class="segbtn active" data-mode="sensible" type="button">🕑 Sensible hours</button>
+      <button class="segbtn" data-mode="absolute" type="button">🌙 Any train</button>
+    </div>
+    <span id="modeHint">Fares for trains at usable hours (out 7am–5pm · back 8am–7:30pm).</span>
+  </div>
+
   <div class="rec" id="recCard">
     <div class="tagline">Recommendation</div>
     <h2 id="recHead">Book Saturday morning out + Sunday morning back, ~8 weeks ahead — about $40 round trip.</h2>
@@ -77,15 +93,15 @@
   </div>
 
   <div class="kpis">
-    <div class="kpi"><div class="label">Cheapest round trip</div><div class="val" id="kpiCheapRT">$40</div><div class="foot">Sat AM out + Sun AM back, ~8 wks ahead</div></div>
-    <div class="kpi"><div class="label">Same trip, last-minute</div><div class="val">$134</div><div class="foot">booked ~5 days out</div></div>
-    <div class="kpi"><div class="label">Booking early saves</div><div class="val">~70%</div><div class="foot">vs. within one week</div></div>
-    <div class="kpi"><div class="label">Weekend fare floor</div><div class="val">$20</div><div class="foot">Sat/Sun; Friday only reaches $35</div></div>
+    <div class="kpi"><div class="label">Best bookable round trip</div><div class="val" id="kpiCheapRT">—</div><div class="foot" id="kpiCheapFoot">sensible-time trains</div></div>
+    <div class="kpi"><div class="label">Absolute floor</div><div class="val" id="kpiFloorRT">—</div><div class="foot" id="kpiFloorFoot">if you'll ride a late train</div></div>
+    <div class="kpi"><div class="label">Late-train “tax”</div><div class="val" id="kpiTax">—</div><div class="foot" id="kpiTaxFoot">extra per leg for a daytime train</div></div>
+    <div class="kpi"><div class="label">Booking early saves</div><div class="val" id="kpiEarly">—</div><div class="foot" id="kpiEarlyFoot">vs. booking last-minute</div></div>
   </div>
 
   <section>
     <h2>1 · Cheapest fare vs. how far ahead you book</h2>
-    <p class="lead">Shaded band = booking <b>sweet spot</b> (~6–9 weeks); dashed line = ~$20 Saver floor. With a log loaded, solid lines are medians with min–max bands.</p>
+    <p class="lead">Shaded band = booking <b>sweet spot</b> (~6–9 weeks); dashed line = observed fare floor for the selected basis. Solid lines are medians with min–max bands. Toggle <b>Sensible hours / Any train</b> above to see how much the floor depends on riding a late train.</p>
     <div class="legend">
       <span><span class="sw d"></span>Weekday (ref)</span>
       <span><span class="sw" style="background:var(--blue)"></span>Friday out</span>
@@ -115,9 +131,19 @@
   </section>
 
   <section>
-    <h2>4 · Cheapest fare by time of day <span class="pill">Friday</span></h2>
-    <p class="lead">A U-shape: cheapest early morning and on the last train; peak in the Friday-evening getaway window (~7:30 p.m.).</p>
-    <div class="chartbox"><canvas id="c2" role="img" aria-label="Cheapest Friday coach fare by departure time, peaking at 161 dollars at 7:27pm."></canvas></div>
+    <h2>4 · Fare by departure time <span class="pill">live</span></h2>
+    <p class="lead">Each logged train plotted by its departure time and Coach fare. The cheapest seats cluster outside the shaded <b>sensible window</b> — early-morning and late-evening departures. Filter by leg.</p>
+    <div id="timeControls" style="margin-bottom:10px">
+      <label style="font-size:13px;color:var(--muted);margin-right:8px">Leg</label>
+      <select id="timeLeg">
+        <option value="all">All legs</option>
+        <option value="Fri">Friday out (NHV→BOS)</option>
+        <option value="Sat">Saturday out (NHV→BOS)</option>
+        <option value="Sun">Sunday back (BOS→NHV)</option>
+      </select>
+      <span id="timeNote" class="status" style="margin-left:12px"></span>
+    </div>
+    <div class="chartbox"><canvas id="c2" role="img" aria-label="Coach fare of each logged train plotted against its departure time, with a shaded sensible-hours window."></canvas></div>
   </section>
 
   <section>
