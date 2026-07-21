@@ -14,7 +14,7 @@ const pts=(a)=>a.map(([x,y])=>({x,y}));
 
 // ---- fare basis: "sensible" (usable departure times) vs "absolute" (any train, incl. late-night) ----
 let DATA=[],MODE='sensible',FLOOR=20,toggleWired=false;
-let c1,c2,c3,c4;
+let c1,c2,c3,c4,c5;
 const WINDOWS={out:[7,17],ret:[8,19.5]};           // sensible departure windows (hours)
 const fareOf=(r)=>MODE==='sensible'&&r.sens!=null?r.sens:r.low;
 const trainOf=(r)=>MODE==='sensible'&&r.strain?r.strain:r.ltrain;
@@ -35,6 +35,7 @@ function initDashboard(){
   document.getElementById('loadBtn').onclick=()=>document.getElementById('csvInput').click();
   document.getElementById('csvInput').onchange=(e)=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{ingest(parseCSV(r.result));}catch(err){document.getElementById('loadStatus').textContent='Could not read file: '+err.message;}};r.readAsText(f);};
   const ls=document.getElementById('timeLeg');if(ls)ls.onchange=buildTimeChart;
+  const as=document.getElementById('acelaLeg');if(as)as.onchange=buildAcela;
 }
 function syncThemeBtn(){const btn=document.getElementById('themeToggle');if(!btn)return;const dark=document.documentElement.getAttribute('data-theme')==='dark';btn.textContent=dark?'☀️ Light':'🌙 Dark';btn.setAttribute('aria-pressed',dark?'true':'false');}
 function wireTheme(){const btn=document.getElementById('themeToggle');if(!btn)return;syncThemeBtn();btn.onclick=()=>{const dark=document.documentElement.getAttribute('data-theme')==='dark';const next=dark?'light':'dark';document.documentElement.setAttribute('data-theme',next);try{localStorage.setItem('amtrak-theme',next);}catch(e){}refreshTheme();syncThemeBtn();if(DATA.length)render();else{if(c1)c1.destroy();if(c3)c3.destroy();seedC1();seedC3();}};}
@@ -70,10 +71,7 @@ function render(){
   const legs=[['Fri','NHV-BOS',COL.friday],['Sat','NHV-BOS',COL.saturday],['Sun','BOS-NHV',COL.sunday]];
   const ds=[{label:'Weekday (seed)',data:pts(SEED.weekday),borderColor:COL.weekday,backgroundColor:COL.weekday,borderWidth:2,borderDash:[5,4],tension:.3,pointRadius:2}];
   legs.forEach(([dow,dir,col])=>{const b=bandFor(legRows(rows,dow,dir),fareOf);if(!b.length)return;const rgba=hexA(col,0.13);ds.push({label:dow+' max',data:b.map(p=>({x:p.x,y:p.max})),borderColor:'transparent',backgroundColor:rgba,pointRadius:0,fill:'+1',tension:.3});ds.push({label:dow+' min',data:b.map(p=>({x:p.x,y:p.min})),borderColor:'transparent',backgroundColor:rgba,pointRadius:0,fill:false,tension:.3});ds.push({label:dow+' median',data:b.map(p=>({x:p.x,y:p.med})),borderColor:col,backgroundColor:col,borderWidth:2,tension:.3,pointRadius:4});});
-  // Acela Business reference line (median by lead-time bucket, both directions)
-  const ab=bandFor(rows.filter(r=>r.acela!=null),(r)=>r.acela);const orange=cssVar('--orange')||'#eb6834';
-  if(ab.length)ds.push({label:'Acela Business (median)',data:ab.map(p=>({x:p.x,y:p.med})),borderColor:orange,backgroundColor:orange,borderWidth:2,borderDash:[6,4],tension:.3,pointRadius:3,pointStyle:'rectRounded'});
-  const ymax=Math.max(90,...rows.map(fareOf).filter(Number.isFinite),...ab.map(p=>p.med))+10;
+  const ymax=Math.max(90,...rows.map(fareOf).filter(Number.isFinite))+8;
   c1.destroy();c1=new Chart(document.getElementById('c1'),{type:'line',plugins:[bandPlugin],data:{datasets:ds},options:baseOpts(95,ymax,'Days booked before departure','Cheapest coach ('+(MODE==='sensible'?'sensible hours':'any train')+')')});
   rebuildRT(rows,latest);
   forecast(rows);
@@ -81,6 +79,29 @@ function render(){
   buildScarcity(rows,latest);
   buildKPIs(rows,latest);
   buildTimeChart();
+  buildAcela();
+}
+
+// Acela Business on its own chart + axis so the coach chart stays readable
+function buildAcela(){
+  const rows=DATA;if(!rows||!rows.length)return;
+  const sel=document.getElementById('acelaLeg');const leg=sel?sel.value:'all';
+  const src=rows.filter(r=>r.acela!=null&&(leg==='all'||r.dow===leg));
+  const b=bandFor(src,(r)=>r.acela);
+  const note=document.getElementById('acelaNote');
+  if(!b.length){if(c5){c5.destroy();c5=null;}if(note)note.textContent='No Acela Business fares logged for this leg yet.';return;}
+  const orange=cssVar('--orange')||'#eb6834',rgba=hexA(orange,0.13);
+  const ds=[
+    {label:'Acela max',data:b.map(p=>({x:p.x,y:p.max})),borderColor:'transparent',backgroundColor:rgba,pointRadius:0,fill:'+1',tension:.3},
+    {label:'Acela min',data:b.map(p=>({x:p.x,y:p.min})),borderColor:'transparent',backgroundColor:rgba,pointRadius:0,fill:false,tension:.3},
+    {label:'Acela median',data:b.map(p=>({x:p.x,y:p.med})),borderColor:orange,backgroundColor:orange,borderWidth:2,tension:.3,pointRadius:4}
+  ];
+  const vals=b.flatMap(p=>[p.min,p.max]);
+  const ymin=Math.max(0,Math.floor((Math.min(...vals)-20)/10)*10),ymax=Math.max(...vals)+15;
+  if(c5)c5.destroy();
+  c5=new Chart(document.getElementById('c5'),{type:'line',data:{datasets:ds},options:baseOpts(95,ymax,'Days booked before departure','Acela Business')});
+  c5.options.scales.y.min=ymin;c5.update();
+  if(note)note.textContent='Own scale ('+money(ymin)+'–'+money(Math.round(ymax))+') so the coach chart stays readable. Median line with min–max band.';
 }
 
 function rebuildRT(rows,latest){const lr=rows.filter(r=>r.captured===latest);const byWk={};lr.forEach(r=>{const k=weekendKey(r);if(!k)return;const o=byWk[k]=byWk[k]||{};o[r.dow]=Math.min(o[r.dow]??Infinity,fareOf(r));if(r.dow==='Sat')o.satDays=r.days;});const satPts=[],friPts=[];Object.values(byWk).forEach(o=>{if(o.satDays==null||o.Sun==null)return;if(o.Sat<Infinity)satPts.push({x:o.satDays,y:o.Sat+o.Sun});if(o.Fri<Infinity)friPts.push({x:o.satDays,y:o.Fri+o.Sun});});satPts.sort((a,b)=>a.x-b.x);friPts.sort((a,b)=>a.x-b.x);const xmax=Math.max(70,...satPts.map(p=>p.x),...friPts.map(p=>p.x))+5;const ymax=Math.max(150,...satPts.map(p=>p.y),...friPts.map(p=>p.y))+10;c3.destroy();c3=new Chart(document.getElementById('c3'),{type:'line',data:{datasets:[{label:'Sat + Sun',data:satPts,borderColor:COL.saturday,backgroundColor:COL.saturday,borderWidth:2,tension:.3,pointRadius:5,pointStyle:'rectRot'},{label:'Fri + Sun',data:friPts,borderColor:COL.friday,backgroundColor:COL.friday,borderWidth:2,tension:.3,pointRadius:5}]},options:baseOpts(xmax,ymax,'Days before departure (Saturday)','Round-trip total ('+(MODE==='sensible'?'sensible':'any train')+')')});}

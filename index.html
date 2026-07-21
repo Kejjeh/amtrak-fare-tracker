@@ -115,10 +115,24 @@
       <span><span class="sw" style="background:var(--blue)"></span>Friday out</span>
       <span><span class="sw" style="background:var(--green)"></span>Saturday out</span>
       <span><span class="sw" style="background:var(--pink)"></span>Sunday return</span>
-      <span><span class="sw" style="border-top:3px dashed var(--orange);height:0;width:18px"></span>Acela Business</span>
       <span><span class="sw band" style="background:rgba(0,131,0,.18)"></span>Sweet spot</span>
     </div>
     <div class="chartbox"><canvas id="c1" role="img" aria-label="Cheapest coach fare versus days booked ahead per leg, with a booking sweet-spot band and floor line."></canvas></div>
+
+    <div style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:8px">
+        <b style="font-size:14.5px"><span style="color:var(--orange)">●</span> Acela Business — same trips, premium fare</b>
+        <label style="font-size:13px;color:var(--muted);margin-left:auto">Leg</label>
+        <select id="acelaLeg">
+          <option value="all">All legs</option>
+          <option value="Fri">Friday (NHV→BOS)</option>
+          <option value="Sat">Saturday (NHV→BOS)</option>
+          <option value="Sun">Sunday (BOS→NHV)</option>
+        </select>
+      </div>
+      <div class="chartbox" style="height:260px"><canvas id="c5" role="img" aria-label="Acela Business fare by days booked ahead, on its own scale."></canvas></div>
+      <p class="note" id="acelaNote"></p>
+    </div>
   </section>
 
   <section>
