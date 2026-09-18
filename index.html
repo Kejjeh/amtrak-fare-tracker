@@ -61,6 +61,20 @@
   .segbtn:not(.active):hover{background:var(--btn-hover)}
   .modebar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:16px}
   #modeHint{color:var(--muted);font-size:12.5px}
+  ul.reasons{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--muted);line-height:1.6}
+  ul.reasons li{margin-bottom:3px}
+  details{margin-top:8px;font-size:13px}
+  details summary{cursor:pointer;color:var(--muted);padding:4px 0;min-height:32px;display:list-item}
+  details summary:hover{color:var(--ink)}
+  details summary:focus-visible,.btn:focus-visible,select:focus-visible,.segbtn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  pre.reason{white-space:pre-wrap;word-break:break-word;font-size:12px;background:var(--ph-bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:var(--muted);margin:8px 0 0}
+  .stale.error{--stale-bg:var(--ph-bg);border-color:var(--red);color:var(--red)}
+  /* Generated tables are wider than a phone; let each box scroll instead of
+     pushing the whole page sideways. */
+  #forecastBox,#scarcityBox,#qualityBox,#seasonTable,.tablewrap{max-width:100%;overflow-x:auto}
+  /* Touch targets: match the 44px the toolbar buttons already use. */
+  .segbtn{min-height:44px}
+  select{min-height:44px}
 </style>
 <script>
 // set theme before first paint to avoid a flash of the wrong mode
@@ -118,7 +132,7 @@
 
   <section>
     <h2>1 · Cheapest fare vs. how far ahead you book</h2>
-    <p class="lead">Shaded band = booking <b>sweet spot</b> (~6–9 weeks); dashed line = observed fare floor for the selected basis. Solid lines are medians with min–max bands. Toggle <b>Sensible hours / Any train</b> above to see how much the floor depends on riding a late train.</p>
+    <p class="lead">Shaded band = booking <b>sweet spot</b> (~6–9 weeks); dashed line = the cheapest fare ever logged for the selected basis (an observation, not a prediction). Solid lines are medians with min–max bands. Toggle <b>Sensible hours / Any train</b> above to see how much the floor depends on riding a late train.</p>
     <div class="legend">
       <span><span class="sw d"></span>Weekday (ref)</span>
       <span><span class="sw" style="background:var(--blue)"></span>Friday out</span>
@@ -127,6 +141,7 @@
       <span><span class="sw band" style="background:rgba(0,131,0,.18)"></span>Sweet spot</span>
     </div>
     <div class="chartbox"><canvas id="c1" role="img" aria-label="Cheapest coach fare versus days booked ahead per leg, with a booking sweet-spot band and floor line."></canvas></div>
+    <p class="note" id="bandNote"></p>
 
     <div style="margin-top:22px;border-top:1px solid var(--line);padding-top:16px">
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:8px">
@@ -180,23 +195,31 @@
 
   <section>
     <h2>5 · Round-trip total by booking window</h2>
-    <p class="lead">Cheapest Coach each way, summed. Saturday-out beats Friday-out at every lead time.</p>
+    <p class="lead">Cheapest Coach each way, summed — both legs from the same capture. A weekend with no Saturday outbound still appears on the Fri+Sun line.</p>
     <div class="legend">
       <span><span class="sw" style="background:var(--green)"></span>Saturday out + Sunday back</span>
       <span><span class="sw" style="background:var(--blue)"></span>Friday out + Sunday back</span>
     </div>
     <div class="chartbox"><canvas id="c3" role="img" aria-label="Round-trip total versus booking lead time for Sat+Sun and Fri+Sun."></canvas></div>
+    <p class="note" id="rtNote"></p>
   </section>
 
   <section>
-    <h2>6 · Scarcity — cheap seats left <span class="pill">live</span></h2>
+    <h2>6 · Scarcity — cheap seats left</h2>
     <p class="lead">"X left at this price": few seats at the lowest bucket means book now, it will jump.</p>
     <div id="scarcityBox" class="placeholder">Load the log to see which legs are down to their last Saver seats and the next price up.</div>
   </section>
 
   <section>
+    <h2>Data quality &amp; provenance</h2>
+    <p class="lead">What this page loaded, what it refused, and why. Every number above is built only from the accepted rows.</p>
+    <div id="qualityBox" class="placeholder">Load the fare log to see how many observations back the charts.</div>
+  </section>
+
+  <section>
     <h2>7 · Train vs. drive</h2>
-    <p class="lead">Same round trip. Train = cheapest-advance to last-minute; car = out-of-pocket with/without paid Boston parking, plus true all-in.</p>
+    <p class="lead">Same round trip. Train = cheapest-advance to last-minute; car = out-of-pocket with/without paid Boston parking, plus true all-in. <b>Fixed reference figures from the July 2026 seed snapshot — not recomputed from the fare log.</b></p>
+    <div class="tablewrap">
     <table>
       <tr><th>Option</th><th>Round-trip cost</th><th>Time each way</th><th>Notes</th></tr>
       <tr><td><b>Regional Coach</b> · early AM, ~8 wks</td><td class="num best">$40</td><td class="num">~2h15</td><td>The floor.</td></tr>
@@ -207,11 +230,14 @@
       <tr><td><b>Drive</b> · + paid Boston parking</td><td class="num">~$124</td><td class="num">~2h30+</td><td>~$40/day erases savings.</td></tr>
       <tr><td><b>Drive</b> · true all-in (67¢/mi)</td><td class="num">~$184</td><td class="num">~2h30+</td><td>Incl. wear/depreciation.</td></tr>
     </table>
+    </div>
     <p class="note">~275 mi round trip · gas ~$3.95/gal (New England, Jul 2026) at ~30 mpg ≈ $36 · ~$8 tolls. Free parking → driving ties a cheap advance train; paid parking → train wins.</p>
   </section>
 
   <section>
-    <h2>Data — lowest-of-day Coach ($)</h2>
+    <h2>Data — lowest-of-day Coach ($) <span class="pill">seed snapshot</span></h2>
+    <p class="lead">The original July 2026 hand-collected table, kept for reference. It does not update with the fare log — the charts above do.</p>
+    <div class="tablewrap">
     <table>
       <tr><th>Days ahead</th><th>Fri→BOS</th><th>Sat→BOS</th><th>Sun→NHV</th><th>Weekday</th></tr>
       <tr><td class="num">1–6</td><td class="num">77</td><td class="num">77</td><td class="num">57</td><td class="num">57</td></tr>
@@ -221,12 +247,14 @@
       <tr><td class="num">57–62</td><td class="num">35</td><td class="num">—</td><td class="num">20</td><td class="num">20</td></tr>
       <tr><td class="num">89–92</td><td class="num">—</td><td class="num">20</td><td class="num">—</td><td class="num">20</td></tr>
     </table>
+    </div>
     <p class="note"><b>Method &amp; limits.</b> Lowest "from" Coach price per departure, pulled live from amtrak.com for one traveler. Each seed cell is a single-date snapshot; the daily log removes that noise by averaging repeat captures. Fares are dynamic. Saver is the lowest, non-refundable bucket.</p>
   </section>
 
   <p class="foot-src">amtrak.com live fares · NHV ⇄ BOS · seed Jul 20, 2026 · gas AAA/EIA New England avg</p>
 </div>
 
-<script src="js/dashboard.js?v=8558147e" defer></script>
+<script src="js/fare-data.js?v=2ef22ab8" defer></script>
+<script src="js/dashboard.js?v=97724128" defer></script>
 </body>
 </html>
