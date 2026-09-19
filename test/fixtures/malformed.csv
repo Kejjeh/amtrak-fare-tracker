@@ -1,0 +1,18 @@
+captured_date,travel_date,day_of_week,direction,days_ahead,lowest_coach_usd,seats_at_lowest,next_coach_usd,acela_business_usd,lowest_train,lowest_depart,sensible_coach_usd,sensible_train,sensible_depart
+2026-09-14,2026-09-26,Sat,NHV-BOS,12,57 USD,,43,216,168,8:44p,57,88,4:47p
+2026-09-14,2026-09-26,Sat,NHV-BOS,12,n/a,,43,216,,,,,
+2026-09-14,2026-09-26,Sat,NHV-BOS,12,,,43,216,,,,,
+2026-09-14,2026-13-45,Sat,NHV-BOS,12,15,,43,216,,,,,
+2026-09-14,2026-02-30,Mon,NHV-BOS,12,15,,43,216,,,,,
+2026-09-14,not-a-date,Sat,NHV-BOS,12,15,,43,216,,,,,
+2026-09-14,2026-09-26,Sat,NHV-BOS,999,15,,43,216,,,,,
+2026-09-14,2026-09-26,Fri,NHV-BOS,12,15,,43,216,,,,,
+2026-09-14,2026-09-26,Sat,NHV-PVD,12,15,,43,216,,,,,
+2026-09-14,2026-09-26,Sat,NHV-BOS,12,0,,43,216,,,,,
+2026-09-14,2026-09-26,Sat,NHV-BOS,12,15,two,43,216,,,,,
+2026-09-14,2026-09-26,Sat,NHV-BOS,12,15,,43,216,,,12,,
+2026-09-14,2026-09-26,Sat,NHV-BOS,12,15,,43,216,,25:99x,,,
+2026-09-14,2026-09-26,Sat
+2026-09-14,2026-09-26,Sat,NHV-BOS,12,15,,43,216,,,,,,,extra
+2026-09-12,2026-09-12,Sat,NHV-BOS,0,15,,43,216,,,,,
+2026-09-14,2026-09-27,Sun,BOS-NHV,13,20,,33,71,,,,,

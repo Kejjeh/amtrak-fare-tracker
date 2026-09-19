@@ -1,4 +1,4 @@
-name: Validate fare CSV
+name: Checks
 
 on:
   push:
@@ -6,16 +6,33 @@ on:
     paths:
       - "data/**"
       - "scripts/**"
+      - "js/**"
+      - "test/**"
+      - "index.html"
       - ".github/workflows/validate-csv.yml"
   pull_request:
-    paths:
-      - "data/**"
-      - "scripts/**"
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Validate CSV schema
         run: python3 scripts/validate_csv.py data/amtrak_fare_log.csv
+
+      - name: Check cache-busters are stamped
+        run: python3 scripts/stamp_version.py --check
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # No dependencies: the suite runs on Node's built-in test runner.
+      - name: Fare-log trust layer regression tests
+        run: node --test 'test/**/*.test.js'
+
+      # The weekend-keying bug this suite covers only shows up away from UTC,
+      # so the suite also runs pinned east of Greenwich.
+      - name: Regression tests under a non-UTC timezone
+        run: TZ=Asia/Tokyo node --test 'test/**/*.test.js'
