@@ -422,14 +422,58 @@ test('too narrow a lead-time span is rejected', () => {
 });
 
 test('a curve that does not describe the prices is suppressed', () => {
-  // Fares that jump around with no lead-time relationship.
+  // Fares that fall overall (so the model's premise holds and the k gate
+  // passes) but scatter far too widely for the curve to describe them.
   const noisy = [7, 20, 34, 48, 62, 76, 90].map((d, i) => ({
-    days: d, fare: [60, 15, 80, 20, 75, 18, 70][i], captured: i % 2 ? '2026-09-17' : '2026-09-18'
+    days: d, fare: [95, 30, 88, 32, 80, 28, 25][i], captured: i % 2 ? '2026-09-17' : '2026-09-18'
   }));
   const fit = FD.fitFloor(noisy);
   assert.equal(fit.ok, false);
+  assert.ok(fit.k > 0, 'this fixture must reach the R-squared gate, not the trend gate');
   assert.match(fit.reason, /explains only \d+% of the variation/);
   assert.ok(fit.r2 < FD.MIN_FIT_R2);
+});
+
+// Was: a log where fares RISE with lead time fitted the exponential almost
+// perfectly (k = -0.108, R2 = 0.998) and was published as
+// "stays flat - book anytime" - a buy-now instruction drawn from data saying
+// the opposite of what the model claims to describe.
+test('a curve where fares rise toward departure is refused, however well it fits', () => {
+  const rising = [
+    { days: 10, fare: 40, captured: '2026-08-01' }, { days: 20, fare: 42, captured: '2026-08-01' },
+    { days: 30, fare: 48, captured: '2026-09-01' }, { days: 40, fare: 64, captured: '2026-09-01' },
+    { days: 50, fare: 105, captured: '2026-09-01' }
+  ];
+  const fit = FD.fitFloor(rising);
+  assert.ok(fit.k < 0, 'fixture really does trend the wrong way');
+  assert.ok(fit.r2 > 0.9, 'and the curve really does fit it well');
+  assert.equal(fit.ok, false, 'a well-fitting wrong-direction curve must still be refused');
+  assert.match(fit.reason, /rise rather than fall/);
+  assert.equal(fit.bookBy, null);
+});
+
+// Was: a log where every fare is identical scored R2 = 1 through the
+// `ssTot === 0 ? 1` shortcut and published "book anytime". Zero variance means
+// the model explained nothing, not that it explained everything.
+test('a log with no price variation is not scored as a perfect fit', () => {
+  const flat = [10, 20, 30, 40, 50].map((d, i) => ({
+    days: d, fare: 50, captured: i < 2 ? '2026-08-01' : '2026-09-01'
+  }));
+  const fit = FD.fitFloor(flat);
+  assert.equal(fit.ok, false);
+  assert.match(fit.reason, /no variation to model/);
+  assert.equal(fit.bookBy, null);
+});
+
+// Was: every published fit ended in an imperative ("book anytime") even when
+// the model found no lead-time effect at all.
+test('no published fit phrases itself as an instruction to buy', () => {
+  const decaying = [7, 21, 35, 49, 63, 77].map((d, i) => ({
+    days: d, fare: [90, 62, 45, 36, 32, 30][i], captured: i % 2 ? '2026-09-17' : '2026-09-18'
+  }));
+  const fit = FD.fitFloor(decaying);
+  assert.equal(fit.ok, true, fit.reason || '');
+  assert.doesNotMatch(fit.bookBy, /book anytime/i);
 });
 
 test('a well-supported decaying curve is published, with its fit quality', () => {
@@ -500,4 +544,96 @@ test('the accessor honours the fare basis without inventing a value', () => {
   assert.equal(absolute({ low: 15, sens: 43 }), 15);
   assert.equal(sensible({ low: null, sens: null }), null);
   assert.equal(sensible({ low: NaN, sens: null }), null);
+});
+
+
+// ----------------------------------------------- departed legs & bookability
+
+// Was: `travelPast` only asked whether the SUNDAY return had gone, so on a
+// Saturday morning a Friday-out + Sunday-back total from a fresh capture was
+// still flagged bookable, charted as a green "Bookable RT" bar and offered by
+// the recommendation card as "good to book". The Friday train had left.
+test('a round trip whose outbound has already travelled is not bookable', () => {
+  const res = parseFix('departed-outbound.csv', { today: '2026-09-19' });
+  const weekends = FD.buildWeekends(res.rows, { today: '2026-09-19' });
+  const gone = weekends.find((w) => w.key === '2026-09-19');
+
+  assert.equal(gone.travelPast, false, 'the Sunday return has not gone yet');
+  assert.equal(gone.latest.rt, 60, 'the pair is still priced, as history');
+  assert.equal(gone.latest.stale, false, 'and the capture is fresh');
+  assert.equal(gone.departed, true);
+  assert.equal(gone.latest.departedLeg, 'Fri');
+  assert.equal(gone.bookable, false, 'but you cannot buy a train that has left');
+});
+
+test('bookableWeekends excludes departed and stale quotes; pricedWeekends keeps them labelled', () => {
+  const res = parseFix('departed-outbound.csv', { today: '2026-09-19' });
+  const weekends = FD.buildWeekends(res.rows, { today: '2026-09-19' });
+
+  const priced = FD.pricedWeekends(weekends).map((w) => w.key);
+  const bookable = FD.bookableWeekends(weekends).map((w) => w.key);
+  assert.deepEqual(priced, ['2026-09-19', '2026-10-03'], 'both are still priced');
+  assert.deepEqual(bookable, ['2026-10-03'], 'only the intact one is bookable');
+});
+
+// Was: bookableWeekends() filtered on `!travelPast` alone, so it happily
+// returned a weekend whose own `bookable` flag the same library had set false
+// for staleness. Nothing that calls itself "bookable" may disagree with that.
+test('nothing bookableWeekends returns ever contradicts its own bookable flag', () => {
+  for (const name of ['healthy.csv', 'stale.csv', 'departed-outbound.csv', 'sparse.csv', 'missing-legs.csv']) {
+    for (const today of ['2026-09-18', '2026-09-19', '2026-10-05']) {
+      const res = parseFix(name, { today });
+      const weekends = FD.buildWeekends(res.rows, { today });
+      for (const w of FD.bookableWeekends(weekends)) {
+        assert.equal(w.bookable, true, `${name} @ ${today}: ${w.key}`);
+        assert.equal(w.travelPast, false, `${name} @ ${today}: ${w.key} already happened`);
+        assert.equal(w.latest.stale, false, `${name} @ ${today}: ${w.key} is stale`);
+        assert.equal(w.latest.departed, false, `${name} @ ${today}: ${w.key} has departed`);
+      }
+    }
+  }
+});
+
+// A train departing later today may or may not still be catchable; the library
+// cannot know the clock time, so it must surface the doubt rather than resolve
+// it silently in either direction.
+test('an outbound travelling today is flagged, not silently sold or dropped', () => {
+  const res = parseFix('departed-outbound.csv', { today: '2026-09-18' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-18' }).find((x) => x.key === '2026-09-19');
+  assert.equal(w.departed, false);
+  assert.equal(w.departsToday, true);
+  assert.equal(w.bookable, true, 'still offered');
+});
+
+// ------------------------------------------------- fare / train provenance
+
+// Was: legDetail fell back to lowest_train/lowest_depart whenever the sensible
+// train columns were blank, so a $68 sensible-hours fare was displayed as
+// departing 9:47p on train #2151 - the train that actually sold the $21 seat.
+test('a fare is never labelled with a train that did not sell it', () => {
+  const res = parseFix('sensible-no-train.csv', { today: '2026-09-19' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19', mode: 'sensible' })[0];
+
+  assert.equal(w.latest.out.fare, 68, 'the sensible fare is the one shown');
+  assert.equal(w.latest.out.train, null, 'and it carries no train number at all');
+  assert.equal(w.latest.out.depart, null, 'nor the 9:47p time of the cheap train');
+  assert.equal(w.latest.out.trainUnknown, true, 'the gap is reported, not papered over');
+});
+
+test('the lowest-fare train is still shown on the absolute basis', () => {
+  const res = parseFix('sensible-no-train.csv', { today: '2026-09-19' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19', mode: 'absolute' })[0];
+  assert.equal(w.latest.out.fare, 21);
+  assert.equal(w.latest.out.train, '2151');
+  assert.equal(w.latest.out.depart, '9:47p');
+  assert.equal(w.latest.out.trainUnknown, false);
+});
+
+test('a train number is reused only when both fares are the same number', () => {
+  const res = parseFix('departed-outbound.csv', { today: '2026-09-19' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19', mode: 'sensible' })
+    .find((x) => x.key === '2026-10-03');
+  assert.equal(w.latest.out.fare, 44);
+  assert.equal(w.latest.out.train, '2155', 'sensible train logged, so it is shown');
+  assert.equal(w.latest.out.trainUnknown, false);
 });

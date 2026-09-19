@@ -17,6 +17,11 @@ const pts=(a)=>a.map(([x,y])=>({x,y}));
 // tested headlessly; this file only draws what that layer vouches for.
 const FD=(typeof window!=='undefined'&&window.FareData)||(typeof require!=='undefined'?require('./fare-data.js'):null);
 let DATA=[],MODE='sensible',FLOOR=20,toggleWired=false;
+let FLOOR_N=0,FLOOR_CAPS=0;   // observations and capture days behind FLOOR
+// Comparing a price against the log's cheapest-ever fare only means
+// something once the log has actually seen a range of prices. Below this
+// the page says so instead of calling a fare good or bad.
+const MIN_FLOOR_OBS=10,MIN_FLOOR_CAPS=2;
 let REPORT=null;          // the full parse result: rows, rejections, provenance
 let TODAY=null;           // today in the corridor's timezone, not the viewer's
 let STALE=false;          // newest capture is too old to call anything bookable
@@ -88,12 +93,18 @@ function holidayName(satKey){return FD.holidayName(satKey);}
 // are reported as incomplete rather than added together.
 function seasonData(rows){
   const weekends=FD.buildWeekends(rows,{fareOf,today:TODAY});
-  return FD.bookableWeekends(weekends).map(w=>{
+  // pricedWeekends, not bookableWeekends: a weekend whose quote is stale or
+  // whose outbound has already departed still belongs in the table as
+  // history. It is labelled, never presented as a price you can act on.
+  return FD.pricedWeekends(weekends).map(w=>{
     const q=w.latest,seats=[q.out.seats,q.ret.seats].filter(v=>v!=null);
     return {k:w.key,rt:q.rt,outDay:q.out.dow,outTrain:q.out.train,outDep:q.out.depart,
       retTrain:q.ret.train,retDep:q.ret.depart,
+      outUnknown:q.out.trainUnknown,retUnknown:q.ret.trainUnknown,
       minSeats:seats.length?Math.min.apply(null,seats):null,
       holiday:w.holiday,asOf:q.captured,ageDays:q.ageDays,stale:q.stale,
+      departed:q.departed,departedLeg:q.departedLeg,departsToday:q.departsToday,
+      bookable:w.bookable,
       missingLegs:w.missingLegs,captureCount:w.captureCount,sampleCount:w.sampleCount};
   });
 }
@@ -104,7 +115,7 @@ function seasonGaps(rows){
   return weekends.filter(w=>!w.travelPast&&!w.latest)
     .map(w=>({k:w.key,reason:w.incompleteReason,captureCount:w.captureCount,sampleCount:w.sampleCount}));
 }
-const seasonLabels={id:'seasonLabels',afterDatasetsDraw(chart){if(chart.canvas.id!=='c6')return;const {ctx,chartArea:a,scales:{y}}=chart;const meta=chart.getDatasetMeta(0),vals=chart.data.datasets[0].data;if(!vals.length)return;const minV=Math.min(...vals);ctx.save();ctx.font='600 10px sans-serif';ctx.textAlign='center';vals.forEach((v,i)=>{const bar=meta.data[i];if(!bar)return;if(v>y.max){ctx.fillStyle=cssVar('--red')||'#e24b4a';ctx.fillText(money(v),bar.x,a.top+11);}else if(v===minV){ctx.fillStyle=cssVar('--green')||'#008300';ctx.fillText(money(v),bar.x,bar.y-4);}});ctx.restore();}};
+const seasonLabels={id:'seasonLabels',afterDatasetsDraw(chart){if(chart.canvas.id!=='c6')return;const {ctx,chartArea:a,scales:{y}}=chart;const meta=chart.getDatasetMeta(0),vals=chart.data.datasets[0].data;if(!vals.length)return;const flags=chart.data.datasets[0].bookable||[];const okVals=vals.filter((v,i)=>flags[i]!==false);const minV=okVals.length?Math.min(...okVals):NaN;ctx.save();ctx.font='600 10px sans-serif';ctx.textAlign='center';vals.forEach((v,i)=>{const bar=meta.data[i];if(!bar)return;if(v>y.max){ctx.fillStyle=cssVar('--red')||'#e24b4a';ctx.fillText(money(v),bar.x,a.top+11);}else if(v===minV&&flags[i]!==false){ctx.fillStyle=cssVar('--green')||'#008300';ctx.fillText(money(v),bar.x,bar.y-4);}});ctx.restore();}};
 
 /**
  * Takes the FULL parse result (not just rows) so the page can report what it
@@ -117,6 +128,7 @@ function ingest(result){
     status.textContent='Could not load the fare log.';
     meta.textContent='No usable fare data — showing the seed snapshot only.';
     showBanner('error','⚠ '+msg.split('\n')[0]);
+    clearRec('The fare log could not be read, so nothing on this page is a current price. See <b>Data quality</b> below for the exact reason.');
     renderQuality(result);
     return;
   }
@@ -128,7 +140,11 @@ function ingest(result){
     meta.textContent=st.dataRecords?('All '+plural(st.dataRecords,'row')+' were rejected — showing the seed snapshot only.')
                                    :'The log has a header but no rows yet.';
     showBanner('error','⚠ No usable fare rows'+(st.rejected?' — '+plural(st.rejected,'row')+' rejected, see “Data quality” below.':'.'));
-    DATA=[];renderQuality(result);return;
+    DATA=[];
+    clearRec(st.dataRecords
+      ?'Every row in the file was rejected, so there is no observation to base a recommendation on. See <b>Data quality</b> below for why each row was refused.'
+      :'The file has a valid header but no fare rows yet.');
+    renderQuality(result);return;
   }
   DATA=rows;
   const caps=st.captures,age=st.latestCaptureAgeDays;
@@ -146,6 +162,18 @@ function ingest(result){
   wireToggle();
   render();
   renderQuality(result);
+}
+
+/**
+ * Blank the recommendation. Without this the card kept whatever it last said
+ * - including the page's own pre-load example - while the status line
+ * underneath reported that the log could not be read, so a failed load still
+ * read as an instruction to buy a specific trip at a specific price.
+ */
+function clearRec(msg){
+  const head=document.getElementById('recHead'),body=document.getElementById('recBody');
+  if(head)head.textContent='No recommendation \u2014 no usable fare data.';
+  if(body)body.innerHTML=msg;
 }
 
 function showBanner(kind,html){
@@ -197,6 +225,7 @@ function render(){
   const rows=DATA;if(!rows.length)return;
   const caps=[...new Set(rows.map(r=>r.captured))].sort();const latest=caps[caps.length-1];
   const fares=finite(rows.map(fareOf));
+  FLOOR_N=fares.length;FLOOR_CAPS=caps.length;
   // The reference line is the cheapest fare actually observed. It used to be
   // Math.min(20, ...), which pinned a $20 "floor" from the seed data onto logs
   // that had never seen anything near it.
@@ -241,21 +270,27 @@ function buildSeason(rows){
   const byDate=[...data].sort((a,b)=>a.k<b.k?-1:1);
   const labels=byDate.map(w=>shortDate(w.k)),vals=byDate.map(w=>w.rt),colors=byDate.map(w=>w.holiday?red:green);
   const anyStaleQuote=byDate.some(w=>w.stale);
+  const anyDeparted=byDate.some(w=>w.departed);
+  // The headline only promises bookability when every row shown is bookable.
+  const allBookable=byDate.every(w=>w.bookable);
   const nonHol=byDate.filter(w=>!w.holiday).map(w=>w.rt);
   const ymax=Math.max(90,...(nonHol.length?nonHol:vals))+18;
   if(c6)c6.destroy();
-  c6=new Chart(chartEl,{type:'bar',plugins:[seasonLabels],data:{labels,datasets:[{label:'Cheapest round trip',data:vals,backgroundColor:colors,borderRadius:4,maxBarThickness:38}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:(c)=>{const w=byDate[c.dataIndex];return money(w.rt)+(w.holiday?' · '+w.holiday:'')+' · '+(w.outDay||'')+' out '+(w.outTrain?'#'+w.outTrain+' ':'')+(w.outDep||'')+' · as of '+w.asOf+(w.stale?' (stale)':'');}}}},scales:{x:{ticks:{color:muted,maxRotation:60,minRotation:45},grid:{display:false}},y:{min:0,max:ymax,title:{display:true,text:(anyStaleQuote?'Last seen round trip':'Bookable round trip')+' ('+(MODE==='sensible'?'sensible':'any train')+')',color:muted},ticks:{color:muted,callback:money},grid:{color:grid}}}}});
+  c6=new Chart(chartEl,{type:'bar',plugins:[seasonLabels],data:{labels,datasets:[{label:'Cheapest round trip',data:vals,bookable:byDate.map(w=>w.bookable),backgroundColor:colors,borderRadius:4,maxBarThickness:38}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:(c)=>{const w=byDate[c.dataIndex];return money(w.rt)+(w.holiday?' · '+w.holiday:'')+' · '+(w.outDay||'')+' out '+(w.outTrain?'#'+w.outTrain+' ':'')+(w.outDep||'')+' · as of '+w.asOf+(w.stale?' (stale)':'')+(w.departed?' · '+w.departedLeg+' outbound already departed':'');}}}},scales:{x:{ticks:{color:muted,maxRotation:60,minRotation:45},grid:{display:false}},y:{min:0,max:ymax,title:{display:true,text:(allBookable?'Bookable round trip':'Last seen round trip')+' ('+(MODE==='sensible'?'sensible':'any train')+')',color:muted},ticks:{color:muted,callback:money},grid:{color:grid}}}}});
   const rank=[...data].sort((a,b)=>a.rt-b.rt);
   const caps=[...new Set(data.map(w=>w.asOf))].sort();
-  const priceHead=anyStaleQuote?'Last seen RT':'Bookable RT';
+  const priceHead=allBookable?'Bookable RT':'Last seen RT';
   let h='<div style="overflow-x:auto"><table><tr><th>#</th><th>Weekend</th><th>'+priceHead+'</th><th>Outbound</th><th>Return</th><th>Seats</th><th>As of</th><th></th></tr>';
   rank.forEach((w,i)=>{
     const scarce=w.minSeats!=null&&w.minSeats<=2;
-    const outTxt=esc(w.outDay||'—')+(w.outTrain?' #'+esc(w.outTrain):'')+(w.outDep?' '+esc(w.outDep):'');
-    const retTxt='Sun'+(w.retTrain?' #'+esc(w.retTrain):'')+(w.retDep?' '+esc(w.retDep):'');
+    const unk=' <span style="color:var(--muted)" title="this fare’s train was not logged">train n/a</span>';
+    const outTxt=esc(w.outDay||'—')+(w.outTrain?' #'+esc(w.outTrain):'')+(w.outDep?' '+esc(w.outDep):'')+(w.outUnknown?unk:'');
+    const retTxt='Sun'+(w.retTrain?' #'+esc(w.retTrain):'')+(w.retDep?' '+esc(w.retDep):'')+(w.retUnknown?unk:'');
     const asOf=shortDate(w.asOf)+(w.stale?' <span class="scarce" title="'+esc(plural(w.ageDays,'day'))+' old">·stale</span>':'');
     const partial=w.missingLegs.length?' <span style="color:var(--muted)" title="no '+esc(w.missingLegs.join('/'))+' leg logged for this weekend">·'+esc(w.missingLegs.join('/'))+' n/a</span>':'';
-    h+='<tr><td class="num">'+(i+1)+'</td><td>'+shortDate(w.k)+partial+'</td><td class="num'+(i===0&&!w.stale?' best':'')+'">'+money(w.rt)+'</td><td>'+outTxt+'</td><td>'+retTxt+'</td>'+
+    // A trip whose outbound has already run cannot be bought at any price.
+    const gone=w.departed?' <span class="scarce" title="the '+esc(w.departedLeg||'outbound')+' leg has already travelled">·departed</span>':(w.departsToday?' <span class="scarce" title="the outbound travels today and may already have left">·departs today</span>':'');
+    h+='<tr><td class="num">'+(i+1)+'</td><td>'+shortDate(w.k)+partial+gone+'</td><td class="num'+(i===0&&w.bookable?' best':'')+'">'+money(w.rt)+'</td><td>'+outTxt+'</td><td>'+retTxt+'</td>'+
       '<td class="num '+(scarce?'scarce':'')+'">'+(w.minSeats!=null?w.minSeats+(scarce?' ⚠':''):'—')+'</td>'+
       '<td style="color:var(--muted)">'+asOf+'</td><td>'+(w.holiday?'<span class="pill">'+esc(w.holiday)+'</span>':'')+'</td></tr>';});
   h+='</table></div>';
@@ -270,7 +305,7 @@ function buildSeason(rows){
     h+='</ul></details>';
   }
   h+='<p class="note">One row per upcoming weekend that has an outbound <b>and</b> a Sunday return <b>from the same capture</b> — legs seen on different mornings are never added together. '+
-    (anyStaleQuote?'<b>Prices marked ·stale come from a capture more than '+FD.STALE_AFTER_DAYS+' days old and are historical, not bookable.</b> ':'')+
+    (anyStaleQuote?'<b>Prices marked ·stale come from a capture more than '+FD.STALE_AFTER_DAYS+' days old and are historical, not bookable.</b> ':'')+(anyDeparted?'<b>Prices marked ·departed include a leg that has already travelled — that round trip can no longer be bought at any price.</b> ':'')+
     'As-of column shows the capture behind each price ('+(caps.length>1?caps.map(shortDate).join(' & '):shortDate(caps[0]))+'). ⚠ = ≤2 seats left at the lowest price on a leg; a blank means seats-left was not shown, not zero. Holiday weekends can be far pricier — see the badge.</p>';
   if(tableEl)tableEl.innerHTML=h;
 }
@@ -348,22 +383,25 @@ function forecast(rows){
   const box=document.getElementById('forecastBox');
   const src=upcoming(rows);
   const legs=[['Friday out','Fri','NHV-BOS',COL.friday],['Saturday out','Sat','NHV-BOS',COL.saturday],['Sunday return','Sun','BOS-NHV',COL.sunday]];
-  let html='<table><tr><th>Leg</th><th>Observed low</th><th>Modeled floor</th><th>Book by</th><th>Fit</th></tr>';
+  // No "Modeled floor" column: the model's floor term is seeded from the
+  // observed minimum, so printing it beside "Observed low" showed the same
+  // number twice and read as the model independently confirming the floor.
+  let html='<table><tr><th>Leg</th><th>Observed low</th><th>Lead-time effect</th><th>Fit</th></tr>';
   let anyFit=false,anyLeg=false;
   legs.forEach(([name,dow,dir,col])=>{
     const lr=legRows(src,dow,dir);
     const pts=lr.map(r=>({days:r.days,fare:fareOf(r),captured:r.captured})).filter(p=>Number.isFinite(p.fare));
     const fit=FD.fitFloor(pts);
     const label='<td><span style="color:'+col+'">●</span> '+esc(name)+'</td>';
-    if(!pts.length){html+='<tr>'+label+'<td colspan="4" style="color:var(--muted)">no observations for this leg</td></tr>';return;}
+    if(!pts.length){html+='<tr>'+label+'<td colspan="3" style="color:var(--muted)">no observations for this leg</td></tr>';return;}
     anyLeg=true;
     const low='<td class="num">'+money(fit.observedLow)+'</td>';
     if(fit.ok){
       anyFit=true;
-      html+='<tr>'+label+low+'<td class="num">'+money(fit.floor)+'</td><td>'+esc(fit.bookBy)+'</td>'+
+      html+='<tr>'+label+low+'<td>'+esc(fit.bookBy)+'</td>'+
         '<td class="num">R²&nbsp;'+fit.r2.toFixed(2)+' · '+plural(fit.n,'lead time')+' · '+plural(fit.captureCount,'capture')+'</td></tr>';
     }else{
-      html+='<tr>'+label+low+'<td colspan="3" style="color:var(--muted)">not modelled — '+esc(fit.reason)+'</td></tr>';
+      html+='<tr>'+label+low+'<td colspan="2" style="color:var(--muted)">not modelled — '+esc(fit.reason)+'</td></tr>';
     }
   });
   html+='</table>';
@@ -483,9 +521,9 @@ function buildKPIs(rows,latest){
   const sensibleFare=FD.makeFareAccessor('sensible'),absoluteFare=FD.makeFareAccessor('absolute');
   const pick=(accessor)=>{
     const live=FD.buildWeekends(rows,{fareOf:accessor,today:TODAY})
-      .filter(w=>!w.travelPast&&w.latest&&w.latest.captured===latest);
+      .filter(w=>!w.travelPast&&w.latest&&w.latest.captured===latest&&!w.latest.departed);
     let best=null;
-    live.forEach(w=>{const q=w.latest;if(!best||q.rt<best.rt)best={k:w.key,rt:q.rt,out:q.out,ret:q.ret,captured:q.captured,ageDays:q.ageDays};});
+    live.forEach(w=>{const q=w.latest;if(!best||q.rt<best.rt)best={k:w.key,rt:q.rt,out:q.out,ret:q.ret,captured:q.captured,ageDays:q.ageDays,departsToday:q.departsToday};});
     return {best,count:live.length};
   };
   const S=pick(sensibleFare),A=pick(absoluteFare);
@@ -550,11 +588,15 @@ function buildKPIs(rows,latest){
     head.textContent='Best bookable round trip: '+bestS.out.dow+' out '+(target.out.train?'(#'+bestS.out.train+(bestS.out.depart?' '+bestS.out.depart:'')+') ':'')+'+ Sunday back, weekend of '+bestS.k+' — about '+money(bestS.rt)+'.';
     const floorTxt=(best&&best.rt<bestS.rt)?' The cheapest seat on any train is '+money(best.rt)+', but that rides a late-evening or early-morning departure.':'';
     // Only compare against a floor the data supports.
-    const cmp=Number.isFinite(FLOOR)
-      ?(bestS.rt<=FLOOR*2+10?'At or near the cheapest round trip this log has seen — <b>good to book</b>.'
-                            :'Above the cheapest round trip this log has seen ('+money(FLOOR)+' per leg); if your weekend is more than two weeks out, watch a few more captures.')
-      :'Not enough history yet to say whether this is a good price.';
-    body.innerHTML=cmp+floorTxt+' Both legs are from the capture of '+esc(bestS.captured)+'.'+basisNote;
+    const grounded=Number.isFinite(FLOOR)&&FLOOR_N>=MIN_FLOOR_OBS&&FLOOR_CAPS>=MIN_FLOOR_CAPS;
+    const evidence=' (against '+plural(FLOOR_N,'observation')+' across '+plural(FLOOR_CAPS,'capture day')+')';
+    const cmp=grounded
+      ?(bestS.rt<=FLOOR*2+10?'At or near the cheapest round trip this log has seen'+evidence+' — <b>good to book</b>.'
+                            :'Above the cheapest round trip this log has seen ('+money(FLOOR)+' per leg)'+evidence+'; if your weekend is more than two weeks out, watch a few more captures.')
+      // Too little history to call a price good or bad — say so rather than guess.
+      :'This log has only '+plural(FLOOR_N,'observation')+' across '+plural(FLOOR_CAPS,'capture day')+', which is not enough to say whether this is a good price.';
+    const today=bestS.departsToday?' <b>The outbound travels today</b>, so it may already have departed.':'';
+    body.innerHTML=cmp+floorTxt+today+' Both legs are from the capture of '+esc(bestS.captured)+'.'+basisNote;
     return;
   }
   head.textContent='Cheapest round trip on any train: weekend of '+best.k+' — about '+money(best.rt)+'.';

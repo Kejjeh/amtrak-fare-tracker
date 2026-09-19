@@ -363,14 +363,28 @@
       return Number.isFinite(v) ? v : null;
     };
   }
+  /**
+   * Describe one leg. The train and departure time MUST describe the fare
+   * being shown. When the sensible fare is used but sensible_train/_depart are
+   * blank, the lowest-fare train is NOT a valid stand-in: that prints a $68
+   * daytime fare next to the 9:47p train that actually sold the $21 seat.
+   * The one safe fallback is when both fares are the same number, in which
+   * case the lowest-fare train is the sensible train.
+   */
   function legDetail(r, fareOf) {
-    var sensible = fareOf(r) === r.sens && r.sens != null;
+    var fare = fareOf(r);
+    var usingSensible = fare != null && r.sens != null && fare === r.sens;
+    var sameFare = r.sens != null && r.low != null && r.sens === r.low;
+    var train = usingSensible ? (r.strain || (sameFare ? r.ltrain : null)) : r.ltrain;
+    var depart = usingSensible ? (r.sdep || (sameFare ? r.ldep : null)) : r.ldep;
     return {
-      fare: fareOf(r),
-      train: sensible && r.strain ? r.strain : r.ltrain,
-      depart: sensible && r.sdep ? r.sdep : r.ldep,
+      fare: fare,
+      train: train || null,
+      depart: depart || null,
+      // True when a fare is shown but the train behind it was never logged.
+      trainUnknown: fare != null && !train,
       seats: r.seats, days: r.days, dow: r.dow, travel: r.travel,
-      captured: r.captured, line: r.line
+      travelDay: r.travelDay, captured: r.captured, line: r.line
     };
   }
 
@@ -427,7 +441,19 @@
         var rt = sumOrNull([c.out.fare, c.ret.fare]);
         if (rt == null) return null;
         var age = todayDay != null ? todayDay - isoToDay(c.captured) : null;
+        // A round trip you cannot buy is not a price. The weekend as a whole
+        // is only "past" once the Sunday return has gone, but the Friday or
+        // Saturday outbound departs first — on Saturday morning a Fri+Sun
+        // total is already unbuyable, however fresh the capture was.
+        var outDay = c.out.travelDay != null ? c.out.travelDay : isoToDay(c.out.travel);
+        var retDay = c.ret.travelDay != null ? c.ret.travelDay : isoToDay(c.ret.travel);
+        var departed = todayDay != null && (
+          (outDay != null && outDay < todayDay) || (retDay != null && retDay < todayDay));
+        var departsToday = todayDay != null && !departed && outDay === todayDay;
         return {
+          departed: departed, departsToday: departsToday,
+          departedLeg: !departed ? null : (
+            (outDay != null && outDay < todayDay) ? c.out.dow : 'Sun'),
           captured: c.captured, out: c.out, ret: c.ret, rt: round2(rt),
           ageDays: age, stale: age == null ? true : age > staleAfter
         };
@@ -452,14 +478,26 @@
                 'no single capture saw both an outbound and the Sunday return'
         ),
         travelPast: past,
-        bookable: !!latest && !past && !latest.stale
+        // The outbound of the newest quote has already travelled.
+        departed: !!latest && !!latest.departed,
+        departsToday: !!latest && !!latest.departsToday,
+        bookable: !!latest && !past && !latest.stale && !latest.departed
       };
     });
   }
 
-  /** Upcoming weekends that have a coherent round trip, cheapest first. */
-  function bookableWeekends(weekends) {
+  /**
+   * Upcoming weekends that have a coherent round trip. These are PRICED, not
+   * necessarily bookable: the quote may be stale or its outbound may already
+   * have departed. Callers that show them must label them as history.
+   */
+  function pricedWeekends(weekends) {
     return weekends.filter(function (w) { return w.latest && !w.travelPast; });
+  }
+
+  /** Weekends a reader could actually still buy: fresh quote, nothing departed. */
+  function bookableWeekends(weekends) {
+    return weekends.filter(function (w) { return w.bookable; });
   }
 
   // ------------------------------------------------------------- holidays
@@ -591,8 +629,26 @@
       ssRes += Math.pow(actual[j] - pred, 2);
       ssTot += Math.pow(actual[j] - mean, 2);
     }
-    var r2 = ssTot === 0 ? 1 : 1 - ssRes / ssTot;
-    base.floor = floor; base.A = A; base.k = k; base.r2 = r2;
+    base.floor = floor; base.A = A; base.k = k;
+
+    // A series with no variance has nothing for a curve to explain. Scoring it
+    // R²=1 rewarded the model for a fact it never modelled, and published
+    // "book anytime" off a log where every fare happened to be identical.
+    if (ssTot === 0) {
+      base.reason = 'every observed fare is the same ' + n + ' times over — no variation to model';
+      return base;
+    }
+    var r2 = 1 - ssRes / ssTot;
+    base.r2 = r2;
+
+    // The model says fares FALL toward a floor as departure nears. When the fit
+    // comes back with k <= 0 the data says the opposite, and the curve can fit
+    // that beautifully (R² 0.998) while describing a trend the product does not
+    // model. Publishing it as a floor forecast is a false claim, so refuse.
+    if (!(k > 0)) {
+      base.reason = 'fares rise rather than fall as departure nears in this log — the fall-to-a-floor model does not describe it';
+      return base;
+    }
 
     if (!(r2 >= MIN_FIT_R2)) {
       base.reason = 'fit explains only ' + Math.round(Math.max(r2, 0) * 100) + '% of the variation (needs ' + Math.round(MIN_FIT_R2 * 100) + '%)';
@@ -603,7 +659,8 @@
       var dsx = Math.log(Math.max(A / 3, 1)) / k;
       base.bookBy = dsx > 7 ? '~' + Math.round(dsx / 7) + ' weeks ahead' : '~1 week ahead (drops fast)';
     } else {
-      base.bookBy = 'stays flat — book anytime';
+      // Descriptive, not an instruction: the log shows no lead-time advantage.
+      base.bookBy = 'no measurable gain from booking earlier';
     }
     base.ok = true;
     return base;
@@ -621,7 +678,8 @@
     parseMoney: parseMoney, parseCount: parseCount, sumOrNull: sumOrNull,
     readRecords: readRecords, parseCSV: parseCSV,
     makeFareAccessor: makeFareAccessor,
-    weekendKey: weekendKey, buildWeekends: buildWeekends, bookableWeekends: bookableWeekends,
+    weekendKey: weekendKey, buildWeekends: buildWeekends,
+    bookableWeekends: bookableWeekends, pricedWeekends: pricedWeekends,
     holidayName: holidayName, bandFor: bandFor, fitFloor: fitFloor
   };
 });
