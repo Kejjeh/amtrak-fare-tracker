@@ -92,7 +92,7 @@ function holidayName(satKey){return FD.holidayName(satKey);}
 // happened yet. Weekends whose legs only ever appeared on different mornings
 // are reported as incomplete rather than added together.
 function seasonData(rows){
-  const weekends=FD.buildWeekends(rows,{fareOf,today:TODAY});
+  const weekends=FD.buildWeekends(rows,{fareOf,mode:MODE,today:TODAY});
   // pricedWeekends, not bookableWeekends: a weekend whose quote is stale or
   // whose outbound has already departed still belongs in the table as
   // history. It is labelled, never presented as a price you can act on.
@@ -105,13 +105,15 @@ function seasonData(rows){
       holiday:w.holiday,asOf:q.captured,ageDays:q.ageDays,stale:q.stale,
       departed:q.departed,departedLeg:q.departedLeg,departsToday:q.departsToday,
       bookable:w.bookable,
+      histRt:q.history.rt,histOutDay:q.history.out.dow,
+      histSuperseded:q.history.supersededByDeparture,
       missingLegs:w.missingLegs,captureCount:w.captureCount,sampleCount:w.sampleCount};
   });
 }
 // Upcoming weekends we could NOT price, and why — shown so a short bar chart
 // never reads as "these are the only weekends worth considering".
 function seasonGaps(rows){
-  const weekends=FD.buildWeekends(rows,{fareOf,today:TODAY});
+  const weekends=FD.buildWeekends(rows,{fareOf,mode:MODE,today:TODAY});
   return weekends.filter(w=>!w.travelPast&&!w.latest)
     .map(w=>({k:w.key,reason:w.incompleteReason,captureCount:w.captureCount,sampleCount:w.sampleCount}));
 }
@@ -289,8 +291,9 @@ function buildSeason(rows){
     const asOf=shortDate(w.asOf)+(w.stale?' <span class="scarce" title="'+esc(plural(w.ageDays,'day'))+' old">·stale</span>':'');
     const partial=w.missingLegs.length?' <span style="color:var(--muted)" title="no '+esc(w.missingLegs.join('/'))+' leg logged for this weekend">·'+esc(w.missingLegs.join('/'))+' n/a</span>':'';
     // A trip whose outbound has already run cannot be bought at any price.
+    const sup=w.histSuperseded?' <span style="color:var(--muted)" title="the cheapest pairing this capture saw was '+esc(w.histOutDay)+' out at '+esc(money(w.histRt))+', but that leg has already travelled">·was '+money(w.histRt)+' before the '+esc(w.histOutDay)+' left</span>':'';
     const gone=w.departed?' <span class="scarce" title="the '+esc(w.departedLeg||'outbound')+' leg has already travelled">·departed</span>':(w.departsToday?' <span class="scarce" title="the outbound travels today and may already have left">·departs today</span>':'');
-    h+='<tr><td class="num">'+(i+1)+'</td><td>'+shortDate(w.k)+partial+gone+'</td><td class="num'+(i===0&&w.bookable?' best':'')+'">'+money(w.rt)+'</td><td>'+outTxt+'</td><td>'+retTxt+'</td>'+
+    h+='<tr><td class="num">'+(i+1)+'</td><td>'+shortDate(w.k)+partial+gone+sup+'</td><td class="num'+(i===0&&w.bookable?' best':'')+'">'+money(w.rt)+'</td><td>'+outTxt+'</td><td>'+retTxt+'</td>'+
       '<td class="num '+(scarce?'scarce':'')+'">'+(w.minSeats!=null?w.minSeats+(scarce?' ⚠':''):'—')+'</td>'+
       '<td style="color:var(--muted)">'+asOf+'</td><td>'+(w.holiday?'<span class="pill">'+esc(w.holiday)+'</span>':'')+'</td></tr>';});
   h+='</table></div>';
@@ -427,7 +430,7 @@ function forecast(rows){
  * which coerces to 0 and quietly halves the round trip.)
  */
 function buildTrajectory(rows){
-  const weekends=FD.buildWeekends(rows,{fareOf,today:TODAY});
+  const weekends=FD.buildWeekends(rows,{fareOf,mode:MODE,today:TODAY});
   const sel=document.getElementById('trajSelect');const prev=sel.value;sel.innerHTML='';
   weekends.forEach(w=>{const o=document.createElement('option');o.value=w.key;
     o.textContent='Weekend of Sat '+w.key+(w.travelPast?' (past)':'')+(w.quotes.length?'':' — no paired quote');
@@ -520,7 +523,7 @@ function buildKPIs(rows,latest){
   // floor" KPI stays meaningful whichever basis the toggle is on.
   const sensibleFare=FD.makeFareAccessor('sensible'),absoluteFare=FD.makeFareAccessor('absolute');
   const pick=(accessor)=>{
-    const live=FD.buildWeekends(rows,{fareOf:accessor,today:TODAY})
+    const live=FD.buildWeekends(rows,{fareOf:accessor,mode:accessor.sensibleBasis?'sensible':'absolute',today:TODAY})
       .filter(w=>!w.travelPast&&w.latest&&w.latest.captured===latest&&!w.latest.departed);
     let best=null;
     live.forEach(w=>{const q=w.latest;if(!best||q.rt<best.rt)best={k:w.key,rt:q.rt,out:q.out,ret:q.ret,captured:q.captured,ageDays:q.ageDays,departsToday:q.departsToday};});

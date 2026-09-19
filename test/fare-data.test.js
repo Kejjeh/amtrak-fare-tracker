@@ -629,11 +629,100 @@ test('the lowest-fare train is still shown on the absolute basis', () => {
   assert.equal(w.latest.out.trainUnknown, false);
 });
 
-test('a train number is reused only when both fares are the same number', () => {
+test('a logged sensible train is shown on the sensible basis', () => {
   const res = parseFix('departed-outbound.csv', { today: '2026-09-19' });
   const w = FD.buildWeekends(res.rows, { today: '2026-09-19', mode: 'sensible' })
     .find((x) => x.key === '2026-10-03');
   assert.equal(w.latest.out.fare, 44);
   assert.equal(w.latest.out.train, '2155', 'sensible train logged, so it is shown');
   assert.equal(w.latest.out.trainUnknown, false);
+});
+
+// Review finding (Astra): equal fares do NOT prove one train sold both.
+// sensible_coach_usd 21 with lowest_coach_usd 21, no sensible train/depart,
+// and lowest_train 99 at 9:47p produced a "sensible" quote on train 99 at
+// 9:47p with trainUnknown=false. 9:47p is not a sensible-hours departure, and
+// nothing in the log links the two fares to one train.
+test('equal fares do not identify the sensible train', () => {
+  const res = parseFix('equal-fares-no-sensible-train.csv', { today: '2026-09-19' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19', mode: 'sensible' })[0];
+  const out = w.latest.out;
+
+  assert.equal(out.fare, 21, 'the sensible fare equals the lowest fare here');
+  assert.equal(out.train, null, 'but no train may be attributed to it');
+  assert.equal(out.depart, null, 'and certainly not the 9:47p departure');
+  assert.equal(out.trainUnknown, true);
+});
+
+test('the same equal-fare row still names its train on the absolute basis', () => {
+  const res = parseFix('equal-fares-no-sensible-train.csv', { today: '2026-09-19' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19', mode: 'absolute' })[0];
+  assert.equal(w.latest.out.fare, 21);
+  assert.equal(w.latest.out.train, '99', 'lowest_train describes the lowest fare');
+  assert.equal(w.latest.out.depart, '9:47p');
+  assert.equal(w.latest.out.trainUnknown, false);
+});
+
+// The basis must be stated, not guessed. With the fares equal there is no
+// value the accessor could return that reveals which column it read.
+test('an unstated basis claims no train when the two fares are equal', () => {
+  const res = parseFix('equal-fares-no-sensible-train.csv', { today: '2026-09-19' });
+  const bare = (r) => (r.sens != null ? r.sens : r.low);   // no sensibleBasis flag
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19', fareOf: bare })[0];
+  assert.equal(w.latest.out.fare, 21);
+  assert.equal(w.latest.out.train, null);
+  assert.equal(w.latest.out.trainUnknown, true);
+});
+
+// ------------------------------------------- eligible outbound within a capture
+
+// Review finding (Astra): one 2026-09-18 capture held Fri 09-18 out $20,
+// Sat 09-19 out $30 and Sun 09-20 back $20. On 09-19 the cheapest-leg-wins
+// rule picked the departed Friday, priced the trip at $40 and then marked the
+// whole weekend unbookable - hiding the Sat+Sun $50 that was still on sale.
+test('a departed cheaper outbound does not hide an eligible one', () => {
+  const res = parseFix('departed-alternative.csv', { today: '2026-09-19' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19' })[0];
+
+  assert.equal(w.latest.out.dow, 'Sat', 'the Saturday has not departed');
+  assert.equal(w.latest.out.fare, 30);
+  assert.equal(w.latest.rt, 50);
+  assert.equal(w.latest.departed, false);
+  assert.equal(w.bookable, true, 'the trip really can still be bought');
+});
+
+test('the cheaper departed pairing is kept as history, not discarded', () => {
+  const res = parseFix('departed-alternative.csv', { today: '2026-09-19' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19' })[0];
+
+  assert.equal(w.latest.history.out.dow, 'Fri');
+  assert.equal(w.latest.history.rt, 40, 'the $40 the log saw is still reported');
+  assert.equal(w.latest.history.supersededByDeparture, true,
+    'and it is marked as superseded because that leg has gone');
+});
+
+test('the actionable pairing still comes from one capture', () => {
+  const res = parseFix('departed-alternative.csv', { today: '2026-09-19' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-19' })[0];
+  assert.equal(w.latest.out.captured, w.latest.ret.captured,
+    'both legs share a capture date');
+  assert.equal(w.latest.out.captured, w.latest.captured);
+});
+
+test('before any leg departs the cheapest outbound is still chosen', () => {
+  const res = parseFix('departed-alternative.csv', { today: '2026-09-18' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-18' })[0];
+  assert.equal(w.latest.out.dow, 'Fri', 'Friday travels today, so it is eligible');
+  assert.equal(w.latest.rt, 40);
+  assert.equal(w.latest.departsToday, true);
+  assert.equal(w.latest.history.supersededByDeparture, false);
+});
+
+test('once every outbound has departed the weekend is history again', () => {
+  const res = parseFix('departed-alternative.csv', { today: '2026-09-20' });
+  const w = FD.buildWeekends(res.rows, { today: '2026-09-20' })[0];
+  assert.equal(w.latest.departed, true);
+  assert.equal(w.latest.departedLeg, 'Fri', 'named after the cheapest departed outbound');
+  assert.equal(w.bookable, false);
+  assert.equal(w.latest.rt, 40, 'and falls back to reporting the historical pairing');
 });

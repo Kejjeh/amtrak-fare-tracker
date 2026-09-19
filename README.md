@@ -69,10 +69,21 @@ Most of the work in `js/fare-data.js` is about not overstating that:
   history, marked `·departed`, and the price column stops calling itself
   "Bookable RT". An outbound travelling *today* is marked `·departs today`,
   since the page cannot know the clock time.
+- **The cheapest leg is chosen from the ones you can still catch.** Within a
+  capture the outbound is picked from the legs that have not already travelled,
+  so a departed Friday cannot hide a Saturday that is still on sale. Both legs
+  still come from the same capture. The capture's cheapest pairing is kept and
+  reported alongside — "·was $40 before the Fri left" — rather than dropped.
 - **A fare is never labelled with a train that did not sell it.** If the
   sensible-hours fare is shown but `sensible_train`/`sensible_depart` are blank,
   the columns read "train n/a" rather than borrowing the lowest-fare train —
   which would print a daytime fare next to a 9:47p departure.
+- **Equal fares do not identify a train.** `sensible_coach_usd` and
+  `lowest_coach_usd` both reading 21 does not mean one train sold both; the log
+  records no link between them, and the only train logged may leave at 9:47p.
+  The fare basis is therefore passed in explicitly, and inferred from the value
+  only when the two fares actually differ. With equal fares and no stated
+  basis, no train is claimed.
 - **The floor forecast is suppressed unless the data supports it** — at least 5
   distinct lead times, across at least 2 capture days, spanning at least 21
   days, with R² ≥ 0.50. Otherwise the table says why it is not modelled and

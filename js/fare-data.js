@@ -358,30 +358,46 @@
   /** 'sensible' falls back to the absolute lowest only when no sensible fare exists. */
   function makeFareAccessor(mode) {
     var sensible = mode !== 'absolute';
-    return function (r) {
+    var fn = function (r) {
       var v = (sensible && r.sens != null) ? r.sens : r.low;
       return Number.isFinite(v) ? v : null;
     };
+    // Which basis this accessor reads. legDetail needs to be TOLD this: when
+    // the sensible and lowest fares are the same number, the value alone
+    // cannot say which column it came from, and therefore which train sold it.
+    fn.sensibleBasis = sensible;
+    return fn;
   }
   /**
    * Describe one leg. The train and departure time MUST describe the fare
    * being shown. When the sensible fare is used but sensible_train/_depart are
-   * blank, the lowest-fare train is NOT a valid stand-in: that prints a $68
-   * daytime fare next to the 9:47p train that actually sold the $21 seat.
-   * The one safe fallback is when both fares are the same number, in which
-   * case the lowest-fare train is the sensible train.
+   * blank, the lowest-fare train is NOT a stand-in: that prints a daytime fare
+   * next to the 9:47p train that actually sold the cheap seat.
+   *
+   * Equal fares prove nothing. sensible_coach_usd 21 and lowest_coach_usd 21
+   * do not mean one train sold both — the log records no such link, and the
+   * only logged train may depart at 9:47p, which is not a sensible hour. So
+   * the basis is passed in, never inferred from the number, and it is inferred
+   * from the value only when the two fares actually differ.
+   *
+   * `sensibleBasis` is true, false, or null/undefined for "not stated".
    */
-  function legDetail(r, fareOf) {
+  function legDetail(r, fareOf, sensibleBasis) {
     var fare = fareOf(r);
-    var usingSensible = fare != null && r.sens != null && fare === r.sens;
-    var sameFare = r.sens != null && r.low != null && r.sens === r.low;
-    var train = usingSensible ? (r.strain || (sameFare ? r.ltrain : null)) : r.ltrain;
-    var depart = usingSensible ? (r.sdep || (sameFare ? r.ldep : null)) : r.ldep;
+    var basis = sensibleBasis == null ? null : !!sensibleBasis;
+    if (basis == null && fare != null) {
+      if (r.sens != null && r.low != null && r.sens !== r.low) basis = (fare === r.sens);
+      else if (r.sens != null && r.low == null) basis = true;
+      else if (r.low != null && r.sens == null) basis = false;
+      // Equal fares with no stated basis stay unresolved: no train is claimed.
+    }
+    var train = basis === true ? r.strain : (basis === false ? r.ltrain : null);
+    var depart = basis === true ? r.sdep : (basis === false ? r.ldep : null);
     return {
       fare: fare,
       train: train || null,
       depart: depart || null,
-      // True when a fare is shown but the train behind it was never logged.
+      // True when a fare is shown but no train can be attributed to it.
       trainUnknown: fare != null && !train,
       seats: r.seats, days: r.days, dow: r.dow, travel: r.travel,
       travelDay: r.travelDay, captured: r.captured, line: r.line
@@ -411,6 +427,9 @@
   function buildWeekends(rows, opts) {
     opts = opts || {};
     var fareOf = opts.fareOf || makeFareAccessor(opts.mode);
+    // State the basis rather than letting legDetail guess it from the number.
+    var sensibleBasis = opts.mode != null ? (opts.mode !== 'absolute')
+      : (typeof fareOf.sensibleBasis === 'boolean' ? fareOf.sensibleBasis : null);
     var today = opts.today || todayISO(opts.timezone);
     var todayDay = isoToDay(today);
     var staleAfter = opts.staleAfterDays == null ? STALE_AFTER_DAYS : opts.staleAfterDays;
@@ -422,13 +441,13 @@
       var w = byWeekend[k] || (byWeekend[k] = { key: k, captures: Object.create(null), samples: 0, legsSeen: {} });
       w.samples++;
       w.legsSeen[r.dow] = true;
-      var cap = w.captures[r.captured] || (w.captures[r.captured] = { captured: r.captured, out: null, ret: null, sampleCount: 0 });
+      var cap = w.captures[r.captured] || (w.captures[r.captured] = { captured: r.captured, outs: [], rets: [], sampleCount: 0 });
       cap.sampleCount++;
-      var det = legDetail(r, fareOf);
+      var det = legDetail(r, fareOf, sensibleBasis);
       if (det.fare == null) return;
-      var slot = r.leg === 'out' ? 'out' : 'ret';
-      // Cheapest leg wins within a capture; ties keep the earlier row.
-      if (!cap[slot] || det.fare < cap[slot].fare) cap[slot] = det;
+      // Keep every leg of the capture. Collapsing to the cheapest here meant a
+      // Friday that had already departed shadowed a Saturday that had not.
+      (r.leg === 'out' ? cap.outs : cap.rets).push(det);
     });
 
     return Object.keys(byWeekend).sort().map(function (k) {
@@ -437,24 +456,39 @@
       var capList = Object.keys(w.captures).sort().map(function (c) { return w.captures[c]; });
 
       var quotes = capList.map(function (c) {
-        if (!c.out || !c.ret) return null;
-        var rt = sumOrNull([c.out.fare, c.ret.fare]);
+        // Cheapest overall: what the log saw, whether or not it can still be
+        // bought. This is the history, and it is kept separately below.
+        var histOut = cheapestLeg(c.outs), histRet = cheapestLeg(c.rets);
+        if (!histOut || !histRet) return null;
+        var histRt = sumOrNull([histOut.fare, histRet.fare]);
+        if (histRt == null) return null;
+
+        // Cheapest leg that has NOT already travelled. A departed Friday must
+        // not shadow a Saturday still on sale: choosing the cheapest leg first
+        // and testing eligibility second hid the buyable trip entirely.
+        var liveOut = cheapestLeg(eligibleLegs(c.outs, todayDay));
+        var liveRet = cheapestLeg(eligibleLegs(c.rets, todayDay));
+        var actionable = !!(liveOut && liveRet);
+
+        // Both legs still come from this one capture, so the total remains a
+        // price that really was on sale at the same moment.
+        var out = actionable ? liveOut : histOut;
+        var ret = actionable ? liveRet : histRet;
+        var rt = sumOrNull([out.fare, ret.fare]);
         if (rt == null) return null;
+
+        var outDay = out.travelDay != null ? out.travelDay : isoToDay(out.travel);
         var age = todayDay != null ? todayDay - isoToDay(c.captured) : null;
-        // A round trip you cannot buy is not a price. The weekend as a whole
-        // is only "past" once the Sunday return has gone, but the Friday or
-        // Saturday outbound departs first — on Saturday morning a Fri+Sun
-        // total is already unbuyable, however fresh the capture was.
-        var outDay = c.out.travelDay != null ? c.out.travelDay : isoToDay(c.out.travel);
-        var retDay = c.ret.travelDay != null ? c.ret.travelDay : isoToDay(c.ret.travel);
-        var departed = todayDay != null && (
-          (outDay != null && outDay < todayDay) || (retDay != null && retDay < todayDay));
-        var departsToday = todayDay != null && !departed && outDay === todayDay;
         return {
-          departed: departed, departsToday: departsToday,
-          departedLeg: !departed ? null : (
-            (outDay != null && outDay < todayDay) ? c.out.dow : 'Sun'),
-          captured: c.captured, out: c.out, ret: c.ret, rt: round2(rt),
+          departed: !actionable,
+          departsToday: actionable && todayDay != null && outDay === todayDay,
+          departedLeg: actionable ? null : (liveOut ? 'Sun' : histOut.dow),
+          captured: c.captured, out: out, ret: ret, rt: round2(rt),
+          // The capture's cheapest pairing, even once it has gone.
+          history: {
+            out: histOut, ret: histRet, rt: round2(histRt),
+            supersededByDeparture: actionable && histRt < rt
+          },
           ageDays: age, stale: age == null ? true : age > staleAfter
         };
       }).filter(Boolean);
@@ -483,6 +517,21 @@
         departsToday: !!latest && !!latest.departsToday,
         bookable: !!latest && !past && !latest.stale && !latest.departed
       };
+    });
+  }
+
+  /** Cheapest leg in a list, or null. Ties keep the earlier row. */
+  function cheapestLeg(list) {
+    var best = null;
+    (list || []).forEach(function (d) { if (!best || d.fare < best.fare) best = d; });
+    return best;
+  }
+  /** Legs whose travel date has not already passed. */
+  function eligibleLegs(list, todayDay) {
+    if (todayDay == null) return (list || []).slice();
+    return (list || []).filter(function (d) {
+      var t = d.travelDay != null ? d.travelDay : isoToDay(d.travel);
+      return t == null || t >= todayDay;
     });
   }
 
