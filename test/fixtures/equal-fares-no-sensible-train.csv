@@ -1,0 +1,3 @@
+captured_date,travel_date,day_of_week,direction,days_ahead,lowest_coach_usd,seats_at_lowest,next_coach_usd,acela_business_usd,lowest_train,lowest_depart,sensible_coach_usd,sensible_train,sensible_depart
+2026-09-18,2026-10-03,Sat,NHV-BOS,15,21,2,35,120,99,9:47p,21,,
+2026-09-18,2026-10-04,Sun,BOS-NHV,16,25,5,40,125,2160,3:15p,25,2160,3:15p

@@ -20,9 +20,15 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HTML = ROOT / "index.html"
-JS = ROOT / "js" / "dashboard.js"
-# matches  <script src="js/dashboard.js"  with an optional existing ?v=...
-TAG = re.compile(r'(<script\s+src="js/dashboard\.js)(\?v=[0-9a-f]+)?(")')
+# Every script the page loads gets its own stamp; fare-data.js carries the
+# parsing rules, so shipping a stale cached copy of it is exactly as bad as
+# shipping a stale dashboard.js.
+SCRIPTS = ["js/fare-data.js", "js/dashboard.js"]
+
+
+def tag_re(src):
+    """matches  <script src="<src>"  with an optional existing ?v=..."""
+    return re.compile(r'(<script\s+src="' + re.escape(src) + r')(\?v=[0-9a-f]+)?(")')
 
 
 def short_hash(path):
@@ -31,28 +37,43 @@ def short_hash(path):
 
 def main():
     check = "--check" in sys.argv[1:]
-    if not JS.exists() or not HTML.exists():
-        sys.exit("stamp_version: missing index.html or js/dashboard.js")
+    if not HTML.exists():
+        sys.exit("stamp_version: missing index.html")
     html = HTML.read_text(encoding="utf-8")
-    m = TAG.search(html)
-    if not m:
-        sys.exit('stamp_version: could not find the <script src="js/dashboard.js"> tag')
-    want = f"?v={short_hash(JS)}"
-    current = m.group(2) or ""
+    stale, stamped = [], []
+
+    for src in SCRIPTS:
+        js = ROOT / src
+        if not js.exists():
+            sys.exit(f"stamp_version: missing {src}")
+        rx = tag_re(src)
+        m = rx.search(html)
+        if not m:
+            sys.exit(f'stamp_version: could not find the <script src="{src}"> tag')
+        want = f"?v={short_hash(js)}"
+        current = m.group(2) or ""
+        if current == want:
+            continue
+        if check:
+            stale.append((src, current or "none", want))
+        else:
+            html = rx.sub(rf"\g<1>{want}\g<3>", html)
+            stamped.append(src + want)
 
     if check:
-        if current != want:
-            print(f"stamp_version: cache-buster is stale (have {current or 'none'}, want {want}).")
+        if stale:
+            for src, have, want in stale:
+                print(f"stamp_version: {src} cache-buster is stale (have {have}, want {want}).")
             print("Run: python scripts/stamp_version.py")
             sys.exit(1)
-        print(f"OK: cache-buster up to date ({want})")
+        print("OK: cache-busters up to date for " + ", ".join(SCRIPTS))
         return
 
-    if current == want:
-        print(f"unchanged ({want})")
+    if not stamped:
+        print("unchanged")
         return
-    HTML.write_text(TAG.sub(rf"\g<1>{want}\g<3>", html), encoding="utf-8")
-    print(f"stamped js/dashboard.js{want}")
+    HTML.write_text(html, encoding="utf-8")
+    print("stamped " + ", ".join(stamped))
 
 
 if __name__ == "__main__":

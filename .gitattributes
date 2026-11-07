@@ -2,5 +2,6 @@
 *.csv text eol=lf
 *.html text eol=lf
 *.md text eol=lf
+*.js text eol=lf
 *.py text eol=lf
 .githooks/pre-commit text eol=lf
