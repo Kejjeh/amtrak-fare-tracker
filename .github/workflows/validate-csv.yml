@@ -16,7 +16,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate CSV schema
         run: python3 scripts/validate_csv.py data/amtrak_fare_log.csv
@@ -24,7 +24,7 @@ jobs:
       - name: Check cache-busters are stamped
         run: python3 scripts/stamp_version.py --check
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
